@@ -18,6 +18,11 @@ protocol PlaybackEngining: AnyObject {
     func seek(to position: TimeInterval)
     func reset()
     func resetMediaServices()
+    func setNormalization(_ normalization: PlaybackNormalization)
+}
+
+extension PlaybackEngining {
+    func setNormalization(_ normalization: PlaybackNormalization) {}
 }
 
 @MainActor
@@ -34,6 +39,11 @@ final class AVPlaybackEngine: PlaybackEngining {
     private var itemGeneration = 0
     private var seekGeneration = 0
     private var seeking = false
+    private var normalization: PlaybackNormalization = .off
+    private var normalizationTask: Task<Void, Never>?
+    private var measurement: PlaybackLevelMeasurement?
+    private var normalizationTrack: AVAssetTrack?
+    private var currentStream: PlaybackStream?
 
     init() {
         observePlayer()
@@ -51,6 +61,7 @@ final class AVPlaybackEngine: PlaybackEngining {
     }
 
     deinit {
+        normalizationTask?.cancel()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let failedEndObserver { NotificationCenter.default.removeObserver(failedEndObserver) }
@@ -79,6 +90,8 @@ final class AVPlaybackEngine: PlaybackEngining {
         let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
         observe(item, generation: generation)
+        currentStream = stream
+        normalizeIfNeeded()
         if position > 0 {
             let target = await boundedPosition(position, asset: asset)
             try ensureCurrent(generation)
@@ -105,7 +118,57 @@ final class AVPlaybackEngine: PlaybackEngining {
         }
     }
 
+    func setNormalization(_ normalization: PlaybackNormalization) {
+        guard self.normalization != normalization else { return }
+        self.normalization = normalization
+        if normalization == .off {
+            normalizationTask?.cancel()
+            normalizationTask = nil
+        }
+        normalizeIfNeeded()
+    }
+
+    private func normalizeIfNeeded() {
+        guard let item = player.currentItem, let stream = currentStream else { return }
+        if normalization == .off {
+            item.audioMix = nil
+            return
+        }
+        if let measurement, let normalizationTrack {
+            item.audioMix = measurement.audioMix(for: normalizationTrack, normalization: normalization)
+            return
+        }
+        guard normalizationTask == nil else { return }
+        normalizationTask = Task(priority: .utility) { [weak self] in
+            let track = try? await item.asset.loadTracks(withMediaType: .audio).first
+            guard let self, !Task.isCancelled, self.player.currentItem == item else { return }
+            guard let track else {
+                self.normalizationTask = nil
+                return
+            }
+            let measurementTask = Task.detached(priority: .utility) {
+                try? await PlaybackLevelMeasurement.measure(stream)
+            }
+            let measurement = await withTaskCancellationHandler {
+                await measurementTask.value
+            } onCancel: {
+                measurementTask.cancel()
+            }
+            guard !Task.isCancelled, self.player.currentItem == item else { return }
+            self.normalizationTask = nil
+            guard let measurement else { return }
+            self.measurement = measurement
+            self.normalizationTrack = track
+            self.normalizeIfNeeded()
+        }
+    }
+
     func reset() {
+        normalizationTask?.cancel()
+        normalizationTask = nil
+        measurement = nil
+        normalizationTrack = nil
+        currentStream = nil
         itemGeneration += 1
         seekGeneration += 1
         seeking = false

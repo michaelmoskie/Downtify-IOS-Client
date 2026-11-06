@@ -103,10 +103,10 @@ struct PlaybackQueue {
         shuffledIDs = currentID.map { [$0] + rest } ?? rest
     }
 
-    func saved(position: TimeInterval) -> SavedPlaybackQueue {
+    func saved(position: TimeInterval, listen: PlaybackListenProgress? = nil) -> SavedPlaybackQueue {
         SavedPlaybackQueue(
             entries: entries.map { .init(id: $0.id, trackID: $0.track.id) },
-            shuffledIDs: shuffledIDs, currentID: currentID, position: position, repeatMode: repeatMode
+            shuffledIDs: shuffledIDs, currentID: currentID, position: position, repeatMode: repeatMode, listen: listen
         )
     }
 
@@ -138,6 +138,7 @@ struct SavedPlaybackQueue: Codable, Equatable {
     let currentID: UUID?
     let position: TimeInterval
     let repeatMode: PlaybackRepeat
+    let listen: PlaybackListenProgress?
 }
 
 @MainActor
@@ -146,6 +147,17 @@ protocol PlaybackStateStoring {
     func save(_ queue: SavedPlaybackQueue, for scope: LibraryScope)
     func loadQualities() -> PlaybackQualities
     func saveQualities(_ qualities: PlaybackQualities)
+    func loadBuffering() -> PlaybackBuffering
+    func saveBuffering(_ buffering: PlaybackBuffering)
+    func loadNormalization() -> PlaybackNormalization
+    func saveNormalization(_ normalization: PlaybackNormalization)
+}
+
+extension PlaybackStateStoring {
+    func loadBuffering() -> PlaybackBuffering { PlaybackBuffering() }
+    func saveBuffering(_ buffering: PlaybackBuffering) {}
+    func loadNormalization() -> PlaybackNormalization { .off }
+    func saveNormalization(_ normalization: PlaybackNormalization) {}
 }
 
 struct PlaybackStateStore: PlaybackStateStoring {
@@ -155,6 +167,11 @@ struct PlaybackStateStore: PlaybackStateStoring {
     func save(_ queue: SavedPlaybackQueue, for scope: LibraryScope) { save(queue, key: key(for: scope)) }
     func loadQualities() -> PlaybackQualities { load("playback.qualities") ?? PlaybackQualities() }
     func saveQualities(_ qualities: PlaybackQualities) { save(qualities, key: "playback.qualities") }
+
+    func loadBuffering() -> PlaybackBuffering { load("playback.buffering") ?? PlaybackBuffering() }
+    func saveBuffering(_ buffering: PlaybackBuffering) { save(buffering, key: "playback.buffering") }
+    func loadNormalization() -> PlaybackNormalization { load("playback.normalization") ?? .off }
+    func saveNormalization(_ normalization: PlaybackNormalization) { save(normalization, key: "playback.normalization") }
 
     private func key(for scope: LibraryScope) -> String {
         let identity = Data("\(scope.serverID.utf8.count):\(scope.serverID)\(scope.account)".utf8)

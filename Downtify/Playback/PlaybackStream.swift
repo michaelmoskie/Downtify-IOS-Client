@@ -76,37 +76,68 @@ struct PlaybackStream: Sendable {
 
 protocol PlaybackStreamResolving {
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
+    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws
+}
+
+extension PlaybackStreamResolving {
+    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {}
 }
 
 struct PlaybackStreamResolver: PlaybackStreamResolving {
     private let transport: any HTTPDataLoading
+    private let cache: PlaybackCache?
 
-    init(transport: any HTTPDataLoading = ConnectionHTTPTransport()) {
+    init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), cache: PlaybackCache? = nil) {
         self.transport = transport
+        self.cache = cache
     }
 
     func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        let (client, address, choices) = try await verifiedServer(for: session)
+        let quality = choices.contains(preference) ? preference : .original
+        let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
+        let source = RangeSource(client: client, address: address, url: url, token: session.token)
+        let (_, response) = try await source.fetch(0...1)
+        let type = try Self.mediaType(response.mediaType, filename: track.file)
+        let representation = PlaybackCache.Representation(
+            scope: LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID),
+            url: url, validator: response.validator ?? UUID().uuidString, length: response.length, mediaType: response.mediaType
+        )
+        let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
+            let (data, current) = try await source.fetch(range, validator: response.validator)
+            guard current.length == response.length, current.mediaType == response.mediaType,
+                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+            return data
+        }
+        return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
+                              quality: response.servedOriginal ? .original : quality, availableQualities: choices) { range in
+            guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
+            if let cache {
+                return try await cache.read(range, representation: representation, fetch: fetch)
+            }
+            return try await fetch(range)
+        }
+    }
+
+    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {
+        guard case .transcoded = quality else { return }
+        let (client, address, choices) = try await verifiedServer(for: session)
+        guard choices.contains(quality) else { return }
+        let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 90)
+        request.httpMethod = "HEAD"
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        _ = try await client.send(request, to: address)
+    }
+
+    private func verifiedServer(for session: DeviceSession) async throws -> (APIClient, ServerAddress, [PlaybackQuality]) {
         let address = try ServerAddress(session.baseAddress)
         guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else { throw PlaybackFailure.insecureAddress }
         let client = APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
         let server = try await client.serverInfo(at: address)
         try Task.checkCancellation()
         guard server.serverID == session.serverID else { throw PlaybackFailure.differentServer }
-
-        let choices = PlaybackQualities.available(on: server)
-        let quality = choices.contains(preference) ? preference : .original
-        let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
-        let source = RangeSource(client: client, address: address, url: url, token: session.token)
-        let (_, response) = try await source.fetch(0...1)
-        let type = try Self.mediaType(response.mediaType, filename: track.file)
-        return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
-                              quality: response.servedOriginal ? .original : quality, availableQualities: choices) { range in
-            guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
-            let (data, current) = try await source.fetch(range, validator: response.validator)
-            guard current.length == response.length, current.mediaType == response.mediaType,
-                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
-            return data
-        }
+        return (client, address, PlaybackQualities.available(on: server))
     }
 
     private static func streamURL(address: ServerAddress, trackID: String, quality: PlaybackQuality) throws -> URL {

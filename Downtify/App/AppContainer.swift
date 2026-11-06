@@ -33,11 +33,16 @@ struct AppContainer {
             didUpdate: { await presentation.syncDidUpdate(for: $0) },
             didFail: { presentation.syncDidFail(for: $0, message: $1) }
         )
+        let playbackCache = PlaybackCache()
+        let verifyPlaybackSession: (DeviceSession) async -> Void = {
+            _ = try? await connection.verifySession(expected: $0)
+        }
         playback = PlaybackController(
-            engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(),
+            engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
             store: PlaybackStateStore(), networkMonitor: SystemPlaybackNetworkMonitor(),
-            verifySession: { _ = try? await connection.verifySession(expected: $0) }
+            cache: playbackCache, reporting: PlaybackReporting(verifySession: verifyPlaybackSession),
+            verifySession: verifyPlaybackSession
         )
     }
 }

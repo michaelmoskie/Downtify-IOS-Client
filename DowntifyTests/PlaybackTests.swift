@@ -309,6 +309,202 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(events, ["began", "resume", "disconnected"])
     }
 
+    func testReadAheadBytesAreReusedOnlyWithinTheValidatedAccountAndQuality() async throws {
+        let cache = PlaybackCache()
+        let transport = StreamTestTransport([
+            .info(), .range("0-1/8", bytes: [1, 2]), .range("0-7/8", bytes: [1, 2, 3, 4, 5, 6, 7, 8]),
+            .info(), .range("0-1/8", bytes: [1, 2]),
+            .info(), .range("0-1/8", bytes: [9, 9]), .range("0-7/8", bytes: Array(repeating: 9, count: 8)),
+            .info(), .range("0-1/8", bytes: [0, 0]), .range("0-7/8", bytes: Array(repeating: 0, count: 8))
+        ])
+        let resolver = PlaybackStreamResolver(transport: transport, cache: cache)
+        let quality = PlaybackQuality.transcoded(.aac, bitrate: 128)
+        let first = try await resolver.resolve(track: track("song"), quality: quality, session: deviceSession())
+        let prefix = try await first.read(0...7)
+        XCTAssertEqual(prefix, Data(1...8))
+        let next = try await resolver.resolve(track: track("song"), quality: quality, session: deviceSession())
+        let cached = try await next.read(3...5)
+        XCTAssertEqual(cached, Data([4, 5, 6]))
+        let original = try await resolver.resolve(track: track("song"), quality: .original, session: deviceSession())
+        let differentQuality = try await original.read(3...5)
+        XCTAssertEqual(differentQuality, Data([9, 9, 9]))
+        let other = DeviceSession(baseAddress: deviceSession().baseAddress, serverID: "server", serverName: "Music",
+                                  deviceID: "other", username: "other", role: nil, token: "other", allowsInsecureHTTP: false)
+        let otherStream = try await resolver.resolve(track: track("song"), quality: quality, session: other)
+        let differentAccount = try await otherStream.read(3...5)
+        XCTAssertEqual(differentAccount, Data([0, 0, 0]))
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 11)
+    }
+
+    func testWarmTranscodeUsesOnlySupportedHeadWithoutDownloadingAudio() async throws {
+        let transport = StreamTestTransport([.info(), .info(), .init(status: 200, headers: [:], body: Data())])
+        let resolver = PlaybackStreamResolver(transport: transport)
+        try await resolver.warmTranscode(track: track("song"), quality: .original, session: deviceSession())
+        try await resolver.warmTranscode(track: track("song"), quality: .transcoded(.mp3, bitrate: 128), session: deviceSession())
+        try await resolver.warmTranscode(track: track("song"), quality: .transcoded(.aac, bitrate: 128), session: deviceSession())
+        let requests = await transport.requests
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "GET", "HEAD"])
+        XCTAssertEqual(requests.last?.url?.absoluteString, "https://music.local/music/api/v1/tracks/song/stream?format=aac&bitrate=128")
+        XCTAssertEqual(requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer playback-test-token")
+        XCTAssertNil(requests.last?.value(forHTTPHeaderField: "Range"))
+    }
+
+    func testReadAheadRespectsCellularShuffleRepeatAndDuplicateTracks() {
+        var queue = PlaybackQueue()
+        queue.replace([track("before"), track("current"), track("current"), track("next")], startingAt: 1)
+        queue.repeatMode = .all
+        let policy = PlaybackBuffering(readAhead: 3)
+        XCTAssertEqual(policy.upcoming(in: queue, on: .wifiOrWired).map(\.id), ["next", "before"])
+        XCTAssertTrue(policy.upcoming(in: queue, on: .cellular).isEmpty)
+        XCTAssertTrue(policy.upcoming(in: queue, on: .unavailable).isEmpty)
+        queue.setShuffle(true)
+        XCTAssertEqual(Set(policy.upcoming(in: queue, on: .wifiOrWired).map(\.id)), ["next", "before"])
+        queue.repeatMode = .one
+        XCTAssertTrue(policy.upcoming(in: queue, on: .wifiOrWired).isEmpty)
+    }
+
+    @MainActor
+    func testListenRetryAfterRelaunchReusesPlayIDAndAcknowledgesOnlySuccess() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outbox = PlaybackListenOutbox(root: root)
+        let report = PlaybackListen(trackID: "song", playID: UUID(), playedAt: Date(timeIntervalSince1970: 1_760_000_000))
+        let receivedBeforeDisconnect = expectation(description: "Server accepted POST but connection failed before the response")
+        let receivedAfterRelaunch = expectation(description: "Server acknowledges replay of the same POST")
+        let transport = ListenRetryTransport(onFirst: { receivedBeforeDisconnect.fulfill() },
+                                             onRetry: { receivedAfterRelaunch.fulfill() })
+        let api = PlaybackReportAPI(transport: transport)
+        var first: PlaybackReporting? = PlaybackReporting(outbox: outbox, api: api)
+        first?.update(session: deviceSession(), online: false)
+        try first?.enqueue(report, for: scope)
+        let files = try outbox.pending(for: scope)
+        XCTAssertEqual(try files.map(outbox.report(at:)), [report])
+        XCTAssertTrue(try outbox.pending(for: LibraryScope(serverID: "server", username: "someone", deviceID: "device")).isEmpty)
+        first?.update(session: deviceSession(), online: true)
+        await fulfillment(of: [receivedBeforeDisconnect], timeout: 2)
+        first?.update(session: nil, online: false)
+        first = nil
+        XCTAssertEqual(try outbox.pending(for: scope), files)
+
+        let restarted = PlaybackReporting(outbox: outbox, api: api)
+        restarted.update(session: deviceSession(), online: true)
+        await fulfillment(of: [receivedAfterRelaunch], timeout: 2)
+        for _ in 0..<100 where try !outbox.pending(for: scope).isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(try outbox.pending(for: scope).isEmpty)
+        let bodies = await transport.bodies
+        XCTAssertEqual(bodies.count, 2)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try bodies.map { try decoder.decode(PlaybackListen.self, from: $0) }, [report, report])
+    }
+
+    @MainActor
+    func testActivitySendsCurrentStatesOnlyWhileOnline() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let response = StreamTestTransport.Response(status: 200, headers: [:], body: Data())
+        let transport = StreamTestTransport([.info(), response, .info(), response, .info(), response])
+        let reporting = PlaybackReporting(outbox: .init(root: root), api: .init(transport: transport))
+        reporting.update(session: deviceSession(), online: false)
+        let song = track("song")
+        reporting.publish(state: .playing, track: song, duration: 100, position: 4)
+        let offline = await transport.requests
+        XCTAssertTrue(offline.isEmpty)
+        reporting.update(session: deviceSession(), online: true)
+        func requests(after expectedCount: Int) async throws -> [URLRequest] {
+            for _ in 0..<100 {
+                let requests = await transport.requests
+                if requests.count >= expectedCount { return requests }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw URLError(.timedOut)
+        }
+        reporting.publish(state: .playing, track: song, duration: 100, position: 6)
+        _ = try await requests(after: 2)
+        reporting.publish(state: .playing, track: song, duration: 100, position: 7)
+        reporting.publish(state: .paused, track: song, duration: 100, position: 7)
+        _ = try await requests(after: 4)
+        reporting.update(session: nil, online: true)
+        let posts = try await requests(after: 6).filter { $0.httpMethod == "POST" }
+        XCTAssertEqual(posts.map { $0.url?.path }, Array(repeating: "/music/api/activity/playback", count: 3))
+        let bodies = try posts.map { try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap($0.httpBody)) as? [String: Any]) }
+        XCTAssertEqual(bodies.compactMap { $0["state"] as? String }, ["playing", "paused", "stopped"])
+        XCTAssertEqual(Set(bodies.compactMap { $0["player"] as? String }).count, 1)
+        XCTAssertEqual(bodies.first?["position"] as? Int, 6)
+        XCTAssertEqual((bodies.first?["track"] as? [String: Any])?["track_id"] as? String, "song")
+        XCTAssertTrue(try PlaybackListenOutbox(root: root).pending(for: scope).isEmpty)
+    }
+
+    @MainActor
+    func testListeningCountsPlaybackAcrossPauseAndRestoreWithoutCountingSeekOrReplayingListen() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outbox = PlaybackListenOutbox(root: root)
+        let fixture = PlaybackFixture(reporting: PlaybackReporting(outbox: outbox))
+        let song = track("song")
+        fixture.network.update?(.unavailable)
+        await fixture.controller.updateSession(deviceSession()) { [song] }
+        let starts = expectation(description: "Playback starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([song])
+        await fulfillment(of: [starts], timeout: 2)
+        fixture.controller.seek(to: 80)
+        fixture.engine.onEvent?(.position(80, duration: 100))
+        fixture.engine.onEvent?(.position(81, duration: 100))
+        fixture.controller.pause()
+        fixture.engine.onEvent?(.position(100, duration: 100))
+        XCTAssertTrue(try outbox.pending(for: scope).isEmpty)
+        fixture.controller.seek(to: 0)
+        fixture.engine.onPlay = nil
+        fixture.controller.play()
+        for position in 0...49 {
+            fixture.engine.onEvent?(.position(Double(position), duration: 100))
+        }
+        let files = try outbox.pending(for: scope)
+        XCTAssertEqual(files.count, 1)
+
+        let restarted = PlaybackFixture(store: fixture.store, reporting: PlaybackReporting(outbox: outbox))
+        restarted.network.update?(.unavailable)
+        await restarted.controller.updateSession(deviceSession()) { [song] }
+        let resumed = expectation(description: "Playback resumes")
+        restarted.engine.onPlay = { resumed.fulfill() }
+        restarted.controller.play()
+        await fulfillment(of: [resumed], timeout: 2)
+        for position in 50...100 {
+            restarted.engine.onEvent?(.position(Double(position), duration: 100))
+        }
+        XCTAssertEqual(try outbox.pending(for: scope), files)
+    }
+
+    func testMeasuredNormalizationBoostsQuietPCMAndProtectsPeak() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_000))
+        buffer.frameLength = 1_000
+        let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+        for index in 0..<1_000 { channel[index] = 0.05 }
+        func writeFixture() throws {
+            let writer = try AVAudioFile(forWriting: url, settings: format.settings)
+            try writer.write(from: buffer)
+        }
+        try writeFixture()
+        let quiet = try XCTUnwrap(PlaybackLevelMeasurement.measure(url))
+        XCTAssertEqual(quiet.gain(for: .normal), 2.518, accuracy: 0.01)
+        XCTAssertEqual(quiet.gain(for: .off), 1)
+
+        channel[0] = -1
+        try writeFixture()
+        let peak = try XCTUnwrap(PlaybackLevelMeasurement.measure(url))
+        XCTAssertEqual(peak.peak, 1, accuracy: 0.001)
+        XCTAssertEqual(peak.gain(for: .maximum), PlaybackLevelMeasurement.peakLimit, accuracy: 0.001)
+        var output: [Float] = [-1, 0.1, 1, .infinity]
+        output.withUnsafeMutableBufferPointer { PlaybackLevelMeasurement.process($0, gain: 2) }
+        XCTAssertEqual(output, [-PlaybackLevelMeasurement.peakLimit, 0.2, PlaybackLevelMeasurement.peakLimit, 0])
+    }
+
     private var scope: LibraryScope { LibraryScope(serverID: "server", username: "listener", deviceID: "device") }
 
     private func track(_ id: String) -> LibraryTrack {
@@ -394,6 +590,36 @@ private actor StreamTestTransport: HTTPDataLoading {
     }
 }
 
+private actor ListenRetryTransport: HTTPDataLoading {
+    private(set) var bodies: [Data] = []
+    private let onFirst: @Sendable () -> Void
+    private let onRetry: @Sendable () -> Void
+
+    init(onFirst: @escaping @Sendable () -> Void, onRetry: @escaping @Sendable () -> Void) {
+        self.onFirst = onFirst
+        self.onRetry = onRetry
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        if url.path.hasSuffix("/api/server/info") {
+            let info = StreamTestTransport.Response.info()
+            return (info.body, try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                                                           headerFields: info.headers)))
+        }
+        XCTAssertEqual(url.path, "/music/api/discover/listens")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer playback-test-token")
+        bodies.append(try XCTUnwrap(request.httpBody))
+        if bodies.count == 1 {
+            onFirst()
+            throw URLError(.networkConnectionLost)
+        }
+        onRetry()
+        return (Data(), try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
+    }
+}
+
 @MainActor
 private struct PlaybackFixture {
     let engine = TestPlaybackEngine()
@@ -404,10 +630,10 @@ private struct PlaybackFixture {
     let store: TestPlaybackStore
     let controller: PlaybackController
 
-    init(store: TestPlaybackStore? = nil) {
+    init(store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil) {
         self.store = store ?? TestPlaybackStore()
         controller = PlaybackController(engine: engine, resolver: resolver, audioSession: audio, remote: remote,
-                                        store: self.store, networkMonitor: network, verifySession: { _ in })
+                                        store: self.store, networkMonitor: network, reporting: reporting, verifySession: { _ in })
     }
 }
 

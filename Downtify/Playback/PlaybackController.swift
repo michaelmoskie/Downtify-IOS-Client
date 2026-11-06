@@ -23,6 +23,11 @@ final class PlaybackController: ObservableObject {
     private let remote: any PlaybackRemoteControlling
     private let store: any PlaybackStateStoring
     private let networkMonitor: any PlaybackNetworkMonitoring
+    @Published private(set) var buffering: PlaybackBuffering
+    @Published private(set) var normalization: PlaybackNormalization
+
+    private let cache: PlaybackCache?
+    private let reporting: PlaybackReporting?
     private let verifySession: (DeviceSession) async -> Void
 
     private var session: DeviceSession?
@@ -37,10 +42,16 @@ final class PlaybackController: ObservableObject {
     private var sessionTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var loadGeneration = 0
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchedTracks: [LibraryTrack] = []
+    private var listen: PlaybackListenProgress?
+    private var lastListenPosition: TimeInterval?
+    private var lastSavedListenElapsed: TimeInterval = 0
 
     init(engine: any PlaybackEngining, resolver: any PlaybackStreamResolving,
          audioSession: any PlaybackAudioSession, remote: any PlaybackRemoteControlling,
          store: any PlaybackStateStoring, networkMonitor: any PlaybackNetworkMonitoring,
+         cache: PlaybackCache? = nil, reporting: PlaybackReporting? = nil,
          verifySession: @escaping (DeviceSession) async -> Void) {
         self.engine = engine
         self.resolver = resolver
@@ -49,7 +60,12 @@ final class PlaybackController: ObservableObject {
         self.store = store
         self.networkMonitor = networkMonitor
         self.verifySession = verifySession
+        self.cache = cache
+        self.reporting = reporting
         qualityPreferences = store.loadQualities()
+        buffering = store.loadBuffering()
+        normalization = store.loadNormalization()
+        engine.setNormalization(normalization)
 
         engine.onEvent = { [weak self] event in self?.receive(event) }
         audioSession.onEvent = { [weak self] event in self?.receive(event) }
@@ -60,6 +76,7 @@ final class PlaybackController: ObservableObject {
     deinit {
         sessionTask?.cancel()
         loadTask?.cancel()
+        prefetchTask?.cancel()
     }
 
     func observeSessions(
@@ -83,6 +100,8 @@ final class PlaybackController: ObservableObject {
         stopEngine()
         audioSession.deactivate()
         session = newSession
+        reporting?.update(session: newSession, online: network != .unavailable)
+        resetListen()
         wantsPlayback = false
         resumeAfterInterruption = false
         resumeAfterNetworkFailure = false
@@ -98,12 +117,17 @@ final class PlaybackController: ObservableObject {
         guard let tracks = try? await tracks(), !Task.isCancelled, session == newSession,
               !queueReadyForPersistence else { return }
         position = queue.restore(saved, tracks: tracks)
+        if queue.currentID == saved.currentID {
+            listen = saved.listen
+            lastSavedListenElapsed = listen?.elapsed ?? 0
+        }
         queueReadyForPersistence = true
         duration = knownDuration(queue.current?.track)
         position = boundedPosition(position)
         if queue.current != nil {
             phase = duration.map { position >= $0 } == true ? .ended : .paused
         }
+        enqueueQualifiedListen()
         publishMetadata()
     }
 
@@ -162,6 +186,20 @@ final class PlaybackController: ObservableObject {
         if old != preferredQuality { reloadForQualityChange() }
     }
 
+    func setBuffering(_ preference: PlaybackBuffering) {
+        buffering = preference
+        store.saveBuffering(preference)
+        if let cache { Task { await cache.resize(to: preference.byteLimit) } }
+        cancelPrefetch()
+        prefetchUpcoming()
+    }
+
+    func setNormalization(_ preference: PlaybackNormalization) {
+        normalization = preference
+        store.saveNormalization(preference)
+        engine.setNormalization(preference)
+    }
+
     func play() {
         guard queue.current != nil, !wantsPlayback else { return }
         resumeAfterNetworkFailure = false
@@ -170,7 +208,10 @@ final class PlaybackController: ObservableObject {
             return
         }
         wantsPlayback = true
-        if phase == .ended { seek(to: 0) }
+        if phase == .ended {
+            resetListen()
+            seek(to: 0)
+        }
         if loaded {
             startEngine()
         } else {
@@ -179,6 +220,8 @@ final class PlaybackController: ObservableObject {
     }
 
     func pause() {
+        lastListenPosition = nil
+        cancelPrefetch()
         wantsPlayback = false
         resumeAfterInterruption = false
         resumeAfterNetworkFailure = false
@@ -195,6 +238,7 @@ final class PlaybackController: ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         guard queue.current != nil, seconds.isFinite else { return }
+        lastListenPosition = nil
         position = boundedPosition(seconds)
         if phase == .ended { phase = .paused }
         if loaded { engine.seek(to: position) }
@@ -217,7 +261,8 @@ final class PlaybackController: ObservableObject {
 
     func persist() {
         guard queueReadyForPersistence, let scope else { return }
-        store.save(queue.saved(position: position), for: scope)
+        store.save(queue.saved(position: position, listen: listen), for: scope)
+        lastSavedListenElapsed = listen?.elapsed ?? 0
         lastSavedPosition = position
     }
 
@@ -231,9 +276,11 @@ final class PlaybackController: ObservableObject {
         queueReadyForPersistence = true
         persist()
         publishMetadata()
+        prefetchUpcoming()
     }
 
     private func didSelect(autoplay: Bool) {
+        resetListen()
         stopEngine()
         if !autoplay || queue.current == nil { audioSession.deactivate() }
         wantsPlayback = false
@@ -242,6 +289,7 @@ final class PlaybackController: ObservableObject {
         position = 0
         duration = knownDuration(queue.current?.track)
         phase = queue.current == nil ? .idle : .paused
+        if !autoplay { reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0) }
         didEditQueue()
         if autoplay { play() }
     }
@@ -267,6 +315,7 @@ final class PlaybackController: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
+                if let cache { await cache.resize(to: buffering.byteLimit) }
                 let stream = try await resolver.resolve(track: track, quality: quality, session: session)
                 try requireCurrentLoad(generation)
                 availableQualities = stream.availableQualities
@@ -309,6 +358,8 @@ final class PlaybackController: ObservableObject {
     }
 
     private func stopEngine() {
+        lastListenPosition = nil
+        cancelPrefetch()
         loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil
@@ -334,17 +385,28 @@ final class PlaybackController: ObservableObject {
         switch event {
         case .playing:
             guard wantsPlayback, loaded else { return }
+            if phase != .playing { lastListenPosition = position }
             phase = .playing
+            if listen == nil, reporting != nil {
+                listen = PlaybackListenProgress()
+                persist()
+            }
+            prefetchUpcoming()
         case .buffering:
             guard wantsPlayback, loaded else { return }
             phase = .buffering
+            lastListenPosition = nil
         case let .position(elapsed, actualDuration):
             guard loaded, elapsed.isFinite else { return }
             if let actualDuration, actualDuration.isFinite, actualDuration > 0 { duration = actualDuration }
             position = boundedPosition(elapsed)
-            if abs(position - lastSavedPosition) >= 5 { persist() }
+            if phase == .playing { recordListen(at: position) }
+            if abs(position - lastSavedPosition) >= 5 || (listen?.elapsed ?? 0) - lastSavedListenElapsed >= 5 { persist() }
         case .ended:
             guard wantsPlayback, loaded else { return }
+            if let duration, phase == .playing { recordListen(at: duration) }
+            resetListen()
+            cancelPrefetch()
             if let next = queue.next(automatic: true) {
                 if next == queue.currentID {
                     seek(to: 0)
@@ -405,13 +467,18 @@ final class PlaybackController: ObservableObject {
         let previous = network
         let oldQuality = preferredQuality
         network = path
+        reporting?.update(session: session, online: path != .unavailable)
+        if previous != path { cancelPrefetch() }
         guard path != .unavailable else { return }
         lastConnectedNetwork = path
         if resumeAfterNetworkFailure, previous == .unavailable {
             play()
         } else if oldQuality != preferredQuality {
             reloadForQualityChange()
+        } else {
+            prefetchUpcoming()
         }
+        publishMetadata()
     }
 
     private func reloadForQualityChange() {
@@ -433,6 +500,80 @@ final class PlaybackController: ObservableObject {
             }
         }
         remote.publish(metadata)
+        switch phase {
+        case .playing:
+            reporting?.publish(state: .playing, track: metadata?.track, duration: duration, position: position)
+        case .paused:
+            reporting?.publish(state: .paused, track: metadata?.track, duration: duration, position: position)
+        case .idle, .ended, .failed:
+            reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0)
+        case .loading, .buffering:
+            break
+        }
+    }
+
+    private func resetListen() {
+        listen = nil
+        lastListenPosition = nil
+        lastSavedListenElapsed = 0
+    }
+
+    private func recordListen(at position: TimeInterval) {
+        defer { lastListenPosition = position }
+        guard let lastListenPosition, var listen, !listen.enqueued else { return }
+        listen.add(position - lastListenPosition)
+        self.listen = listen
+        enqueueQualifiedListen()
+    }
+
+    private func enqueueQualifiedListen() {
+        guard let track = queue.current?.track, let scope, let reporting, var listen,
+              !listen.enqueued, listen.qualifies(duration: duration) else { return }
+        // Checkpoint the play ID before making its first report visible to the worker.
+        persist()
+        do {
+            try reporting.enqueue(.init(trackID: track.id, playID: listen.id, playedAt: listen.started), for: scope)
+            listen.enqueued = true
+            self.listen = listen
+            persist()
+        } catch {
+            // Keep the same play ID and retry the write on the next playback update.
+        }
+    }
+
+    private func cancelPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetchedTracks = []
+    }
+
+    private func prefetchUpcoming() {
+        guard phase == .playing, let cache, let session else { return }
+        let upcoming = buffering.upcoming(in: queue, on: network)
+        let warmOnly = upcoming.isEmpty && network != .unavailable && preferredQuality != .original
+        let next = warmOnly ? queue.next(automatic: true) : nil
+        let nextTrack = next.flatMap { id in queue.entries.first { $0.id == id }?.track }
+        let planned = nextTrack.flatMap { $0.id == queue.current?.track.id ? nil : [$0] } ?? upcoming
+        guard planned != prefetchedTracks else { return }
+        cancelPrefetch()
+        prefetchedTracks = planned
+        let quality = preferredQuality
+        let resolver = resolver
+        let byteLimit = buffering.byteLimit
+        prefetchTask = Task(priority: .utility) {
+            await cache.resize(to: byteLimit)
+            for track in planned {
+                guard !Task.isCancelled else { return }
+                if warmOnly {
+                    try? await resolver.warmTranscode(track: track, quality: quality, session: session)
+                    continue
+                }
+                guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
+                      !Task.isCancelled else { continue }
+                // Resolving the ranged URL also materializes supported transcodes on the server.
+                _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
+            }
+        }
     }
 
     private func boundedPosition(_ seconds: TimeInterval) -> TimeInterval {

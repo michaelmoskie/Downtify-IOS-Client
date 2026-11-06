@@ -22,7 +22,7 @@ struct LibraryTrack: Codable, Equatable, Identifiable, Sendable {
     let playlists: [String]
 }
 
-struct LibraryScope: Equatable, Sendable {
+struct LibraryScope: Hashable, Sendable {
     let serverID: String
     let account: String
 

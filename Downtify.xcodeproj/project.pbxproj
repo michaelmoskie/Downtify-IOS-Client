@@ -5,6 +5,12 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000061 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackNormalization.swift; sourceTree = "<group>"; };
+		000000000000000000000062 = { isa = PBXBuildFile; fileRef = 000000000000000000000061; };
+		00000000000000000000005F = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackReporting.swift; sourceTree = "<group>"; };
+		000000000000000000000060 = { isa = PBXBuildFile; fileRef = 00000000000000000000005F; };
+		00000000000000000000005D = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCache.swift; sourceTree = "<group>"; };
+		00000000000000000000005E = { isa = PBXBuildFile; fileRef = 00000000000000000000005D; };
 		000000000000000000000053 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -57,6 +63,9 @@
 				000000000000000000000049,
 				00000000000000000000004B,
 				00000000000000000000004D,
+				000000000000000000000061,
+				00000000000000000000005F,
+				00000000000000000000005D,
 			);
 			path = Playback;
 			sourceTree = "<group>";
@@ -434,6 +443,9 @@
 				00000000000000000000004A,
 				00000000000000000000004C,
 				00000000000000000000004E,
+				000000000000000000000062,
+				000000000000000000000060,
+				00000000000000000000005E,
 				000000000000000000000002,
 				000000000000000000000004,
 				000000000000000000000054,
