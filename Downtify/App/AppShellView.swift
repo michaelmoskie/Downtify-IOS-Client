@@ -20,6 +20,7 @@ struct AppShellView: View {
                                deviceName: name)
             case let .library(server):
                 LibraryHomeView(server: server, library: library, playback: playback, appearance: $appearance,
+                                connection: presentation.connectionService,
                                 signOut: { try await presentation.connectionService.signOut() })
             }
         }
@@ -64,7 +65,7 @@ struct PlaybackDock: View {
 
     var body: some View {
         Group {
-            if playback.queue.current != nil {
+            if playback.podcast != nil || playback.queue.current != nil {
                 MiniPlayerView(playback: playback) { showingNowPlaying = true }
                     .frame(maxWidth: 760)
                     .padding(.horizontal, DowntifyStyle.Space.regular)
@@ -95,7 +96,16 @@ private struct MiniPlayerView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
             : AnyLayout(HStackLayout(spacing: 4))
         layout {
-            if let track {
+            if let podcast = playback.podcast {
+                Button(action: open) {
+                    DowntifyMediaRow(title: podcast.episode.title, subtitle: podcast.show.name, accessibilityLineLimit: 2) {
+                        PodcastArtwork(show: podcast.show, size: 44)
+                    } accessory: { EmptyView() }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Now playing, \(podcast.episode.title), \(podcast.show.name)")
+                .accessibilityHint("Open Now Playing")
+            } else if let track {
                 Button(action: open) {
                     DowntifyMediaRow(title: track.displayTitle, subtitle: track.displayArtist, accessibilityLineLimit: 2) {
                         TrackArtwork(track: track, size: 44)
@@ -120,11 +130,13 @@ private struct MiniPlayerView: View {
                     }
                     .accessibilityLabel(isActive ? "Pause" : "Play")
                 }
-                Button { playback.skipNext() } label: {
-                    Image(systemName: "forward.end.fill").downtifyControlTarget()
+                if playback.podcast == nil {
+                    Button { playback.skipNext() } label: {
+                        Image(systemName: "forward.end.fill").downtifyControlTarget()
+                    }
+                    .accessibilityLabel("Next track")
+                    .disabled(playback.queue.next(automatic: false) == nil)
                 }
-                .accessibilityLabel("Next track")
-                .disabled(playback.queue.next(automatic: false) == nil)
             }
             .font(.body.weight(.semibold))
             .buttonStyle(.borderless)
@@ -165,8 +177,14 @@ private struct NowPlayingView: View {
                     ? AnyLayout(HStackLayout(alignment: .center, spacing: DowntifyStyle.Space.large))
                     : AnyLayout(VStackLayout(spacing: DowntifyStyle.Space.large))
                 layout {
-                    TrackArtwork(track: track, size: artworkSize)
-                        .accessibilityHidden(true)
+                    Group {
+                        if let podcast = playback.podcast {
+                            PodcastArtwork(show: podcast.show, size: artworkSize)
+                        } else {
+                            TrackArtwork(track: track, size: artworkSize)
+                        }
+                    }
+                    .accessibilityHidden(true)
                     VStack(spacing: DowntifyStyle.Space.regular) {
                         trackMetadata
                         phaseDescription
@@ -175,7 +193,18 @@ private struct NowPlayingView: View {
                             .multilineTextAlignment(.center)
                         timeline
                         transportControls
-                        queueControls
+                        if playback.podcast == nil {
+                            queueControls
+                        } else {
+                            if playback.podcastProgressSaveFailed {
+                                Text("Could not save playback progress to the server.")
+                                    .font(.footnote)
+                                    .foregroundStyle(DowntifyStyle.error)
+                            }
+                            if track != nil {
+                                Button("Back to music", systemImage: "music.note") { playback.returnToMusic() }
+                            }
+                        }
                     }
                     .frame(maxWidth: 400)
                 }
@@ -201,14 +230,14 @@ private struct NowPlayingView: View {
 
     private var trackMetadata: some View {
         VStack(spacing: 5) {
-            Text(track?.displayTitle ?? String(localized: "Unknown title"))
+            Text(playback.podcast?.episode.title ?? track?.displayTitle ?? String(localized: "Unknown title"))
                 .font(.title2.weight(.bold))
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .accessibilityAddTraits(.isHeader)
-            Text(track?.displayArtist ?? String(localized: "Unknown artist"))
+            Text(playback.podcast?.show.name ?? track?.displayArtist ?? String(localized: "Unknown artist"))
                 .font(.title3)
                 .foregroundStyle(DowntifyStyle.secondaryText)
-            if let album = track?.album, !album.isEmpty {
+            if let album = playback.podcast == nil ? track?.album : playback.podcast?.show.author, !album.isEmpty {
                 Text(album)
                     .font(.subheadline)
                     .foregroundStyle(DowntifyStyle.secondaryText)
@@ -221,12 +250,19 @@ private struct NowPlayingView: View {
 
     private var transportControls: some View {
         HStack(spacing: DowntifyStyle.Space.regular) {
-            Button { playback.skipPrevious() } label: {
-                Image(systemName: "backward.end.fill").font(.title2)
-                    .downtifyControlTarget()
+            if playback.podcast != nil {
+                Button { playback.seek(to: playback.position - 15) } label: {
+                    Image(systemName: "gobackward.15").font(.title2).downtifyControlTarget()
+                }
+                .accessibilityLabel("Back 15 seconds")
+            } else {
+                Button { playback.skipPrevious() } label: {
+                    Image(systemName: "backward.end.fill").font(.title2)
+                        .downtifyControlTarget()
+                }
+                .accessibilityLabel("Previous track")
+                .disabled(track == nil)
             }
-            .accessibilityLabel("Previous track")
-            .disabled(track == nil)
             if case .failed = playback.phase {
                 Button { playback.play() } label: {
                     Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 56))
@@ -239,14 +275,21 @@ private struct NowPlayingView: View {
                         .font(.system(size: 56)).downtifyControlTarget()
                 }
                 .accessibilityLabel(activelyPlaying ? "Pause" : "Play")
-                .disabled(track == nil)
+                .disabled(track == nil && playback.podcast == nil)
             }
-            Button { playback.skipNext() } label: {
-                Image(systemName: "forward.end.fill").font(.title2)
-                    .downtifyControlTarget()
+            if playback.podcast != nil {
+                Button { playback.seek(to: playback.position + 30) } label: {
+                    Image(systemName: "goforward.30").font(.title2).downtifyControlTarget()
+                }
+                .accessibilityLabel("Forward 30 seconds")
+            } else {
+                Button { playback.skipNext() } label: {
+                    Image(systemName: "forward.end.fill").font(.title2)
+                        .downtifyControlTarget()
+                }
+                .accessibilityLabel("Next track")
+                .disabled(playback.queue.next(automatic: false) == nil)
             }
-            .accessibilityLabel("Next track")
-            .disabled(playback.queue.next(automatic: false) == nil)
         }
         .buttonStyle(.borderless)
     }
@@ -319,13 +362,13 @@ private struct NowPlayingView: View {
     private var phaseDescription: some View {
         switch playback.phase {
         case .idle: Text("Ready")
-        case .loading: Label("Loading track", systemImage: "hourglass")
+        case .loading: Label(playback.podcast == nil ? "Loading track" : "Loading episode", systemImage: "hourglass")
         case .paused: Text("Paused")
         case .playing: Label("Playing", systemImage: "waveform")
         case .buffering: Label("Buffering", systemImage: "waveform")
         case .ended: Text("Finished")
         case .failed(let failure):
-            Label(playbackFailureMessage(failure), systemImage: "exclamationmark.triangle.fill")
+            Label(playbackFailureMessage(failure, isPodcast: playback.podcast != nil), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(DowntifyStyle.error)
         }
     }
@@ -333,8 +376,8 @@ private struct NowPlayingView: View {
     private var timeline: some View {
         VStack(spacing: 5) {
             if let duration = playback.duration, duration.isFinite, duration > 0 {
-                Slider(value: Binding(get: { min(playback.position, duration) }, set: { playback.seek(to: $0) }),
-                       in: 0...duration)
+                Slider(value: Binding(get: { min(playback.position, duration) }, set: { playback.seek(to: $0, checkpoint: false) }),
+                       in: 0...duration, onEditingChanged: { if !$0 { playback.finishScrubbing() } })
                     .accessibilityLabel("Playback position")
                     .accessibilityValue("\(spokenDuration(playback.position)) of \(spokenDuration(duration))")
                 HStack {
@@ -569,16 +612,16 @@ private struct ArtworkPlaceholder: View {
     }
 }
 
-private func playbackFailureMessage(_ failure: PlaybackFailure) -> String {
+func playbackFailureMessage(_ failure: PlaybackFailure, isPodcast: Bool = false) -> String {
     switch failure {
     case .signedOut: "Sign in to play this track"
-    case .differentServer: "This track belongs to a different server"
+    case .differentServer: isPodcast ? "This episode belongs to a different server" : "This track belongs to a different server"
     case .insecureAddress: "The server connection is not secure"
     case .unauthorized: "Your session needs to be refreshed"
     case .network: "Could not reach the server"
     case .invalidStream: "The audio stream is unavailable"
     case .unsupportedFormat: "This audio format is unsupported"
-    case .media: "Could not play this track"
+    case .media: isPodcast ? "Could not play this episode" : "Could not play this track"
     case .audioSession: "Audio playback could not start"
     }
 }

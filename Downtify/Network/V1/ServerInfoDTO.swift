@@ -12,11 +12,13 @@ enum MobileAPIV1 {
 
             let signedURLs: Bool?
             let passwordSignIn: Bool?
+            let podcasts: Bool?
             let transcoding: Transcoding?
 
             enum CodingKeys: String, CodingKey {
                 case signedURLs = "signed_urls"
                 case passwordSignIn = "password_sign_in"
+                case podcasts
                 case transcoding
             }
         }
@@ -30,6 +32,8 @@ enum MobileAPIV1 {
         var supportsPasswordSignIn: Bool {
             capabilities?.passwordSignIn == true
         }
+
+        var supportsPodcasts: Bool { capabilities?.podcasts == true }
 
         var isCompatible: Bool {
             product == "Downtify" && apiVersion <= MobileAPIV1.maximumAPIVersion

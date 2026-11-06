@@ -507,6 +507,159 @@ final class PlaybackTests: XCTestCase {
 
     private var scope: LibraryScope { LibraryScope(serverID: "server", username: "listener", deviceID: "device") }
 
+    func testPodcastRequestsRequireCapabilityAndUseClientRoutes() async throws {
+        for capability in ["{}", #"{"podcasts":false}"#] {
+            let transport = StreamTestTransport([.podcastInfo(capability)])
+            do {
+                _ = try await PodcastsAPI(transport: transport).shows(session: deviceSession())
+                XCTFail("Expected the podcast capability gate")
+            } catch {
+                XCTAssertEqual(error as? PodcastAPIError, .unsupported)
+            }
+            let requests = await transport.requests
+            XCTAssertEqual(requests.map { $0.url?.path }, ["/music/api/server/info"])
+            XCTAssertNil(requests[0].value(forHTTPHeaderField: "Authorization"))
+        }
+
+        let episode = Self.podcastEpisodeJSON
+        let show = #"{"id":9,"name":"Series","author":"Host"}"#
+        let info = StreamTestTransport.Response.podcastInfo()
+        let transport = StreamTestTransport([
+            info, .json("[\(show)]"),
+            info, .json(#"{"show":\#(show),"episodes":[\#(episode)]}"#),
+            info, .json(episode.replacingOccurrences(of: #""filename":null"#, with: #""filename":"Podcasts/Series/Episode.mp3""#)),
+            info, .json(episode)
+        ])
+        let api = PodcastsAPI(transport: transport)
+        let shows = try await api.shows(session: deviceSession())
+        XCTAssertEqual(shows.map(\.name), ["Series"])
+        let page = try await api.episodes(showID: 9, session: deviceSession())
+        XCTAssertEqual(page.episodes.first?.positionSeconds, 41)
+        let downloaded = try await api.download(episodeID: 17, session: deviceSession())
+        XCTAssertTrue(downloaded.isDownloaded)
+        _ = try await api.savePlayback(episodeID: 17, position: 51.5, played: true, session: deviceSession())
+
+        let requests = await transport.requests.enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "GET", "POST", "PUT"])
+        XCTAssertEqual(requests.compactMap { $0.url?.path }, [
+            "/music/api/podcasts/shows", "/music/api/podcasts/shows/9/episodes",
+            "/music/api/podcasts/episodes/17/download", "/music/api/podcasts/episodes/17/playback"
+        ])
+        XCTAssertTrue(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer playback-test-token" })
+        let body = try XCTUnwrap(requests.last?.httpBody)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(payload["position_seconds"] as? Double, 51.5)
+        XCTAssertEqual(payload["played"] as? Bool, true)
+    }
+
+    func testPodcastStreamUsesPublisherWithoutPairingCredentialsAndRangesForServerCopy() async throws {
+        let episode = try Self.podcastEpisode()
+        let info = StreamTestTransport.Response.podcastInfo()
+        let transport = StreamTestTransport([
+            info, info, .range("0-1/8", bytes: [0, 1], mime: "audio/mpeg"), .range("3-4/8", bytes: [3, 4], mime: "audio/mpeg")
+        ])
+        let api = PodcastsAPI(transport: transport)
+        let published = try await api.stream(episode: episode, session: deviceSession())
+        XCTAssertEqual(published.directURL?.absoluteString, "https://publisher.test/audio.mp3")
+        var requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertNil(requests[0].value(forHTTPHeaderField: "Authorization"))
+
+        let download = try Self.podcastEpisode(filename: "Podcasts/Series/Episode #1.mp3")
+        let saved = try await api.stream(episode: download, session: deviceSession())
+        XCTAssertNil(saved.directURL)
+        let bytes = try await saved.read(3...4)
+        XCTAssertEqual(bytes, Data([3, 4]))
+        requests = await transport.requests
+        XCTAssertEqual(requests[2].url?.absoluteString, "https://music.local/music/downloads/Podcasts/Series/Episode%20%231.mp3")
+        XCTAssertEqual(requests[2].value(forHTTPHeaderField: "Authorization"), "Bearer playback-test-token")
+        XCTAssertEqual(requests[3].value(forHTTPHeaderField: "If-Range"), "\"file-v1\"")
+    }
+
+    @MainActor
+    func testEpisodeResumesReportsProgressAndHandsBackToMusic() async throws {
+        let episode = try Self.podcastEpisode()
+        let show = PodcastShow(id: 9, name: "Series", author: "Host", description: nil,
+                               artworkURL: nil, episodeCount: 1, downloadedCount: 0)
+        let podcasts = TestPodcasts(episode: episode)
+        let outboxRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: outboxRoot) }
+        let reporter = PlaybackReporting(outbox: PlaybackListenOutbox(root: outboxRoot),
+            defaults: UserDefaults(suiteName: "DowntifyTests.\(UUID().uuidString)")!)
+        let fixture = PlaybackFixture(reporting: reporter, podcasts: podcasts)
+        let session = deviceSession()
+        let song = track("17")
+        await fixture.controller.updateSession(session) { [] }
+        reporter.update(session: session, online: false)
+        let initialMusicStarted = expectation(description: "Music playing before handoff")
+        fixture.engine.onPlay = { initialMusicStarted.fulfill() }
+        fixture.controller.replaceQueue([song])
+        await fulfillment(of: [initialMusicStarted], timeout: 2)
+        fixture.controller.seek(to: 12)
+        fixture.engine.onEvent?(.position(12, duration: 100))
+        fixture.engine.onEvent?(.position(13, duration: 100))
+        fixture.engine.onEvent?(.position(14, duration: 100))
+        fixture.controller.persist()
+        XCTAssertEqual(fixture.store.load(for: scope)?.listen?.elapsed, 2)
+        let initialResets = fixture.engine.resets
+
+        let episodeStarted = expectation(description: "Episode loaded")
+        fixture.engine.onPlay = { episodeStarted.fulfill() }
+        fixture.controller.playEpisode(episode, from: show, session: session)
+        await fulfillment(of: [episodeStarted], timeout: 2)
+        fixture.engine.onPlay = nil
+        XCTAssertEqual(fixture.engine.loads, [0, 41])
+        XCTAssertGreaterThan(fixture.engine.resets, initialResets)
+        XCTAssertEqual(fixture.remote.metadata?.podcast?.episode.id, 17)
+        XCTAssertNil(fixture.remote.metadata?.track)
+        XCTAssertFalse(fixture.remote.metadata?.canSkipNext ?? true)
+
+        for seconds in 42...50 { fixture.engine.onEvent?(.position(Double(seconds), duration: 120)) }
+        let initialReports = await podcasts.reports
+        XCTAssertEqual(initialReports, [])
+        fixture.engine.onEvent?(.position(51, duration: 120))
+        await fulfillment(of: [podcasts.firstReport], timeout: 2)
+        fixture.remote.onCommand?(.seek(86))
+        XCTAssertEqual(fixture.engine.seeks.last, 86)
+        await fulfillment(of: [podcasts.secondReport], timeout: 2)
+        fixture.remote.onCommand?(.pause)
+        XCTAssertEqual(fixture.controller.phase, .paused)
+        XCTAssertFalse(fixture.audio.active)
+        await fulfillment(of: [podcasts.thirdReport], timeout: 2)
+
+        fixture.remote.onCommand?(.play)
+        fixture.engine.onEvent?(.ended)
+        await fulfillment(of: [podcasts.fourthReport], timeout: 2)
+        fixture.controller.play()
+        fixture.controller.persist()
+        XCTAssertEqual(fixture.store.load(for: scope)?.listen?.elapsed, 2,
+                       "Restarting an ended episode must preserve the suspended music listen checkpoint")
+        let reports = await podcasts.reports
+        XCTAssertEqual(reports, [
+            .init(position: 51, played: false), .init(position: 86, played: false),
+            .init(position: 86, played: false), .init(position: 120, played: true)
+        ])
+        fixture.controller.returnToMusic()
+        XCTAssertNil(fixture.controller.podcast)
+        XCTAssertEqual(fixture.controller.position, 14)
+        XCTAssertEqual(fixture.remote.metadata?.track, song)
+        XCTAssertFalse(fixture.audio.active)
+        let musicStarted = expectation(description: "Music loaded")
+        fixture.engine.onPlay = { musicStarted.fulfill() }
+        fixture.controller.play()
+        await fulfillment(of: [musicStarted], timeout: 2)
+        XCTAssertEqual(fixture.engine.loads, [0, 41, 14])
+    }
+
+    private static let podcastEpisodeJSON = #"{"id":17,"show_id":9,"title":"Episode","duration_seconds":120,"enclosure_url":"https://publisher.test/audio.mp3","filename":null,"position_seconds":41,"played":false}"#
+
+    private static func podcastEpisode(filename: String? = nil) throws -> PodcastEpisode {
+        let json = filename.map {
+            podcastEpisodeJSON.replacingOccurrences(of: #""filename":null"#, with: #""filename":"\#($0)""#)
+        } ?? podcastEpisodeJSON
+        return try JSONDecoder().decode(PodcastEpisode.self, from: Data(json.utf8))
+    }
+
     private func track(_ id: String) -> LibraryTrack {
         LibraryTrack(id: id, file: "\(id).mp3", title: id, artist: "Artist", artists: ["Artist"], album: "Album",
                      albumArtist: "Artist", albumID: "album", artistID: "artist", trackNumber: 1, year: "2026",
@@ -584,6 +737,14 @@ private actor StreamTestTransport: HTTPDataLoading {
                        """.utf8))
         }
 
+        static func json(_ body: String) -> Self {
+            Response(status: 200, headers: ["Content-Type": "application/json"], body: Data(body.utf8))
+        }
+
+        static func podcastInfo(_ capabilities: String = #"{"podcasts":true}"#) -> Self {
+            json(#"{"product":"Downtify","api_version":1,"server_id":"server","capabilities":\#(capabilities)}"#)
+        }
+
         static func range(_ range: String, bytes: [UInt8], mime: String = "audio/mp4", original: Bool = false) -> Self {
             Response(status: 206,
                      headers: ["Content-Range": "bytes \(range)", "Content-Type": mime, "ETag": "\"file-v1\"",
@@ -646,10 +807,12 @@ private struct PlaybackFixture {
     let store: TestPlaybackStore
     let controller: PlaybackController
 
-    init(store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil) {
+    init(store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil,
+         podcasts: any PodcastPlaybackServing = PodcastsAPI()) {
         self.store = store ?? TestPlaybackStore()
         controller = PlaybackController(engine: engine, resolver: resolver, audioSession: audio, remote: remote,
-                                        store: self.store, networkMonitor: network, reporting: reporting, verifySession: { _ in })
+                                        store: self.store, networkMonitor: network, reporting: reporting, podcasts: podcasts,
+                                        verifySession: { _ in })
     }
 }
 
@@ -660,6 +823,7 @@ private final class TestPlaybackEngine: PlaybackEngining {
     var loads: [TimeInterval] = []
     var seeks: [TimeInterval] = []
     var mediaResets = 0
+    var resets = 0
 
     func load(_ stream: PlaybackStream, at position: TimeInterval) async throws { loads.append(position) }
     func play() {
@@ -668,8 +832,38 @@ private final class TestPlaybackEngine: PlaybackEngining {
     }
     func pause() {}
     func seek(to position: TimeInterval) { seeks.append(position) }
-    func reset() {}
+    func reset() { resets += 1 }
     func resetMediaServices() { mediaResets += 1 }
+}
+
+private actor TestPodcasts: PodcastPlaybackServing {
+    let firstReport = XCTestExpectation(description: "Ten seconds of episode playback")
+    let secondReport = XCTestExpectation(description: "Seek checkpoint")
+    let thirdReport = XCTestExpectation(description: "Pause checkpoint")
+    let fourthReport = XCTestExpectation(description: "Completion checkpoint")
+    private(set) var reports: [PlaybackController.PodcastProgress] = []
+    let episode: PodcastEpisode
+
+    init(episode: PodcastEpisode) { self.episode = episode }
+
+    func stream(episode: PodcastEpisode, session: DeviceSession) async throws -> PlaybackStream {
+        PlaybackStream(contentType: "public.mp3", fileExtension: "mp3", length: 8, quality: .original,
+                       availableQualities: [.original], read: { _ in Data() })
+    }
+
+    func savePlayback(episodeID: Int, position: Double, played: Bool?,
+                      session: DeviceSession) async throws -> PodcastEpisode {
+        XCTAssertEqual(episodeID, episode.id)
+        reports.append(.init(position: position, played: played))
+        switch reports.count {
+        case 1: firstReport.fulfill()
+        case 2: secondReport.fulfill()
+        case 3: thirdReport.fulfill()
+        case 4: fourthReport.fulfill()
+        default: break
+        }
+        return episode
+    }
 }
 
 private actor TestStreamResolver: PlaybackStreamResolving {

@@ -85,7 +85,8 @@ enum PlaybackRemoteCommand {
 }
 
 struct PlaybackMetadata {
-    let track: LibraryTrack
+    let track: LibraryTrack?
+    var podcast: PodcastSelection? = nil
     let position: TimeInterval
     let duration: TimeInterval?
     let isPlaying: Bool
@@ -137,9 +138,9 @@ final class SystemPlaybackRemoteControls: PlaybackRemoteControlling {
             return
         }
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: metadata.track.title,
-            MPMediaItemPropertyArtist: metadata.track.artist,
-            MPMediaItemPropertyAlbumTitle: metadata.track.album,
+            MPMediaItemPropertyTitle: metadata.podcast?.episode.title ?? metadata.track?.title ?? "",
+            MPMediaItemPropertyArtist: metadata.podcast?.show.author ?? metadata.track?.artist ?? "",
+            MPMediaItemPropertyAlbumTitle: metadata.podcast?.show.name ?? metadata.track?.album ?? "",
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: metadata.position,
             MPNowPlayingInfoPropertyPlaybackRate: metadata.isPlaying ? 1.0 : 0.0,

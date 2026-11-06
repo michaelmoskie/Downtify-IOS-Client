@@ -6,9 +6,16 @@ enum PlaybackPhase: Equatable {
     case failed(PlaybackFailure)
 }
 
+struct PodcastSelection: Equatable {
+    let show: PodcastShow
+    let episode: PodcastEpisode
+}
+
 @MainActor
 final class PlaybackController: ObservableObject {
     @Published private(set) var queue = PlaybackQueue()
+    @Published private(set) var podcast: PodcastSelection?
+    @Published private(set) var podcastProgressSaveFailed = false
     @Published private(set) var phase: PlaybackPhase = .idle
     @Published private(set) var position: TimeInterval = 0
     @Published private(set) var duration: TimeInterval?
@@ -28,7 +35,21 @@ final class PlaybackController: ObservableObject {
 
     private let cache: PlaybackCache?
     private let reporting: PlaybackReporting?
+    private let podcasts: any PodcastPlaybackServing
     private let verifySession: (DeviceSession) async -> Void
+    private var suspendedMusicPosition: TimeInterval = 0
+    private var podcastProgress: [Int: PodcastProgress] = [:]
+    private var pendingPodcastProgress: [Int: PodcastProgress] = [:]
+    private var progressTask: Task<Void, Never>?
+    private var progressGeneration = 0
+    private var episodeTimeSinceReport: TimeInterval = 0
+    private var lastEpisodeSample: TimeInterval?
+    private var episodeHasProgress = false
+
+    struct PodcastProgress: Equatable {
+        let position: TimeInterval
+        let played: Bool?
+    }
 
     private var session: DeviceSession?
     private var loaded = false
@@ -53,6 +74,7 @@ final class PlaybackController: ObservableObject {
          audioSession: any PlaybackAudioSession, remote: any PlaybackRemoteControlling,
          store: any PlaybackStateStoring, networkMonitor: any PlaybackNetworkMonitoring,
          cache: PlaybackCache? = nil, reporting: PlaybackReporting? = nil,
+         podcasts: any PodcastPlaybackServing = PodcastsAPI(),
          verifySession: @escaping (DeviceSession) async -> Void) {
         self.engine = engine
         self.resolver = resolver
@@ -63,6 +85,7 @@ final class PlaybackController: ObservableObject {
         self.verifySession = verifySession
         self.cache = cache
         self.reporting = reporting
+        self.podcasts = podcasts
         qualityPreferences = store.loadQualities()
         buffering = store.loadBuffering()
         normalization = store.loadNormalization()
@@ -78,6 +101,7 @@ final class PlaybackController: ObservableObject {
         sessionTask?.cancel()
         loadTask?.cancel()
         prefetchTask?.cancel()
+        progressTask?.cancel()
     }
 
     func observeSessions(
@@ -97,9 +121,22 @@ final class PlaybackController: ObservableObject {
 
     func updateSession(_ newSession: DeviceSession?, tracks: () async throws -> [LibraryTrack]) async {
         guard session != newSession else { return }
+        if podcast != nil {
+            checkpointPodcast(played: phase == .ended ? true : nil)
+            await progressTask?.value
+        }
         persist()
         stopEngine()
         audioSession.deactivate()
+        progressGeneration += 1
+        progressTask?.cancel()
+        progressTask = nil
+        podcast = nil
+        podcastProgress.removeAll()
+        pendingPodcastProgress.removeAll()
+        podcastProgressSaveFailed = false
+        suspendedMusicPosition = 0
+        engine.setNormalization(normalization)
         session = newSession
         reporting?.update(session: newSession, online: network != .unavailable)
         resetListen()
@@ -117,19 +154,120 @@ final class PlaybackController: ObservableObject {
         guard let scope, let saved = store.load(for: scope) else { return }
         guard let tracks = try? await tracks(), !Task.isCancelled, session == newSession,
               !queueReadyForPersistence else { return }
-        position = queue.restore(saved, tracks: tracks)
+        let restoredPosition = queue.restore(saved, tracks: tracks)
         if queue.currentID == saved.currentID {
             listen = saved.listen
             lastSavedListenElapsed = listen?.elapsed ?? 0
         }
         queueReadyForPersistence = true
+        if podcast != nil {
+            suspendedMusicPosition = restoredPosition
+            return
+        }
         duration = knownDuration(queue.current?.track)
-        position = boundedPosition(position)
+        position = boundedPosition(restoredPosition)
         if queue.current != nil {
             phase = duration.map { position >= $0 } == true ? .ended : .paused
         }
         enqueueQualifiedListen()
         publishMetadata()
+    }
+
+    func playEpisode(_ episode: PodcastEpisode, from show: PodcastShow, session expected: DeviceSession) {
+        guard session == expected else { return }
+        if podcast?.episode.id == episode.id {
+            podcast = PodcastSelection(show: show, episode: episode)
+            play()
+            return
+        }
+        if podcast == nil {
+            persist()
+            suspendedMusicPosition = position
+            reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0)
+        } else if phase != .ended {
+            checkpointPodcast()
+        }
+        stopEngine()
+        engine.setNormalization(.off)
+        wantsPlayback = false
+        resumeAfterInterruption = false
+        resumeAfterNetworkFailure = false
+        podcast = PodcastSelection(show: show, episode: episode)
+        duration = knownDuration(episode.durationSeconds)
+        let saved = podcastProgress[episode.id]
+        position = (saved?.played ?? episode.played) == true ? 0 : boundedPosition(saved?.position ?? episode.positionSeconds ?? 0)
+        if duration.map({ position >= $0 }) == true { position = 0 }
+        episodeHasProgress = false
+        episodeTimeSinceReport = 0
+        lastEpisodeSample = nil
+        phase = .paused
+        publishMetadata()
+        play()
+    }
+
+    func podcastProgress(for episode: PodcastEpisode) -> PodcastProgress {
+        if podcast?.episode.id == episode.id, episodeHasProgress {
+            return PodcastProgress(position: position, played: phase == .ended)
+        }
+        return podcastProgress[episode.id] ?? PodcastProgress(position: episode.positionSeconds ?? 0, played: episode.played)
+    }
+
+    func returnToMusic() {
+        leavePodcast(publish: true)
+    }
+
+    private func leavePodcast(publish: Bool) {
+        guard podcast != nil else { return }
+        if phase != .ended { checkpointPodcast() }
+        stopEngine()
+        engine.setNormalization(normalization)
+        audioSession.deactivate()
+        podcast = nil
+        wantsPlayback = false
+        resumeAfterInterruption = false
+        resumeAfterNetworkFailure = false
+        duration = knownDuration(queue.current?.track)
+        position = boundedPosition(suspendedMusicPosition)
+        if queue.current == nil {
+            phase = .idle
+        } else {
+            phase = duration.map { position >= $0 } == true ? .ended : .paused
+        }
+        if publish { publishMetadata() }
+    }
+
+    private func checkpointPodcast(played: Bool? = nil) {
+        guard let episodeID = podcast?.episode.id, episodeHasProgress, let session else { return }
+        let saved = PodcastProgress(position: position, played: played ?? (phase == .ended))
+        podcastProgress[episodeID] = saved
+        pendingPodcastProgress[episodeID] = saved
+        episodeTimeSinceReport = 0
+        flushPodcastProgress(for: session)
+    }
+
+    private func flushPodcastProgress(for session: DeviceSession) {
+        guard progressTask == nil, !pendingPodcastProgress.isEmpty else { return }
+        let generation = progressGeneration
+        progressTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if generation == progressGeneration { progressTask = nil } }
+            // Serialize writes so a slow periodic request cannot overwrite a newer pause.
+            while !Task.isCancelled, let (id, progress) = pendingPodcastProgress.first {
+                pendingPodcastProgress.removeValue(forKey: id)
+                do {
+                    _ = try await podcasts.savePlayback(episodeID: id, position: progress.position,
+                                                        played: progress.played, session: session)
+                    guard generation == progressGeneration, !Task.isCancelled else { return }
+                    podcastProgressSaveFailed = false
+                } catch {
+                    guard generation == progressGeneration, !Task.isCancelled else { return }
+                    if pendingPodcastProgress[id] == nil { pendingPodcastProgress[id] = progress }
+                    podcastProgressSaveFailed = true
+                    if case APIError.httpStatus(401, _) = error { await verifySession(session) }
+                    return
+                }
+            }
+        }
     }
 
     func replaceQueue(_ tracks: [LibraryTrack], startingAt index: Int = 0, autoplay: Bool = true) {
@@ -141,7 +279,7 @@ final class PlaybackController: ObservableObject {
         guard !tracks.isEmpty else { return }
         let hadCurrent = queue.current != nil
         queue.append(tracks)
-        if hadCurrent {
+        if hadCurrent || podcast != nil {
             didEditQueue()
         } else {
             didSelect(autoplay: false)
@@ -152,7 +290,13 @@ final class PlaybackController: ObservableObject {
         let wasCurrent = queue.currentID == id
         queue.remove(id)
         if wasCurrent {
-            didSelect(autoplay: wantsPlayback)
+            if podcast != nil {
+                resetListen()
+                suspendedMusicPosition = 0
+                didEditQueue()
+            } else {
+                didSelect(autoplay: wantsPlayback)
+            }
         } else {
             didEditQueue()
         }
@@ -165,7 +309,11 @@ final class PlaybackController: ObservableObject {
 
     func select(_ id: UUID) {
         guard queue.entries.contains(where: { $0.id == id }) else { return }
-        if queue.currentID == id { play(); return }
+        if queue.currentID == id {
+            returnToMusic()
+            play()
+            return
+        }
         queue.select(id)
         didSelect(autoplay: true)
     }
@@ -198,11 +346,11 @@ final class PlaybackController: ObservableObject {
     func setNormalization(_ preference: PlaybackNormalization) {
         normalization = preference
         store.saveNormalization(preference)
-        engine.setNormalization(preference)
+        if podcast == nil { engine.setNormalization(preference) }
     }
 
     func play() {
-        guard queue.current != nil, !wantsPlayback else { return }
+        guard (podcast != nil || queue.current != nil), !wantsPlayback else { return }
         resumeAfterNetworkFailure = false
         if isInterrupted {
             resumeAfterInterruption = true
@@ -210,8 +358,8 @@ final class PlaybackController: ObservableObject {
         }
         wantsPlayback = true
         if phase == .ended {
-            resetListen()
-            seek(to: 0)
+            if podcast == nil { resetListen() }
+            seek(to: 0, checkpoint: false)
         }
         if loaded {
             startEngine()
@@ -229,30 +377,48 @@ final class PlaybackController: ObservableObject {
         if phase == .loading { stopEngine() }
         engine.pause()
         audioSession.deactivate()
-        if queue.current != nil { phase = .paused }
-        didEditQueue()
+        if podcast != nil {
+            lastEpisodeSample = nil
+            if phase != .ended { phase = .paused }
+            checkpointPodcast(played: phase == .ended ? true : nil)
+            publishMetadata()
+        } else {
+            if queue.current != nil { phase = .paused }
+            didEditQueue()
+        }
     }
 
     func togglePlayback() {
         if wantsPlayback || resumeAfterInterruption { pause() } else { play() }
     }
 
-    func seek(to seconds: TimeInterval) {
-        guard queue.current != nil, seconds.isFinite else { return }
+    func seek(to seconds: TimeInterval, checkpoint: Bool = true) {
+        guard (podcast != nil || queue.current != nil), seconds.isFinite else { return }
         lastListenPosition = nil
         position = boundedPosition(seconds)
         if phase == .ended { phase = .paused }
         if loaded { engine.seek(to: position) }
-        didEditQueue()
+        if podcast != nil {
+            episodeHasProgress = true
+            lastEpisodeSample = nil
+            if checkpoint { checkpointPodcast() }
+            publishMetadata()
+        } else {
+            didEditQueue()
+        }
+    }
+
+    func finishScrubbing() {
+        checkpointPodcast()
     }
 
     func skipNext() {
-        guard let next = queue.next(automatic: false) else { return }
+        guard podcast == nil, let next = queue.next(automatic: false) else { return }
         advance(to: next)
     }
 
     func skipPrevious() {
-        guard queue.current != nil else { return }
+        guard podcast == nil, queue.current != nil else { return }
         if position >= 3 || queue.previous() == nil {
             seek(to: 0)
         } else if let previous = queue.previous() {
@@ -262,9 +428,10 @@ final class PlaybackController: ObservableObject {
 
     func persist() {
         guard queueReadyForPersistence, let scope else { return }
-        store.save(queue.saved(position: position, listen: listen), for: scope)
+        let musicPosition = podcast == nil ? position : suspendedMusicPosition
+        store.save(queue.saved(position: musicPosition, listen: listen), for: scope)
         lastSavedListenElapsed = listen?.elapsed ?? 0
-        lastSavedPosition = position
+        lastSavedPosition = musicPosition
     }
 
     private var scope: LibraryScope? {
@@ -281,6 +448,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func didSelect(autoplay: Bool) {
+        leavePodcast(publish: false)
         resetListen()
         stopEngine()
         if !autoplay || queue.current == nil { audioSession.deactivate() }
@@ -305,7 +473,9 @@ final class PlaybackController: ObservableObject {
     }
 
     private func loadCurrent() {
-        guard let track = queue.current?.track else { return }
+        let episode = podcast?.episode
+        let track = queue.current?.track
+        guard episode != nil || track != nil else { return }
         guard let session else { fail(.signedOut); return }
         stopEngine()
         let generation = loadGeneration
@@ -316,8 +486,15 @@ final class PlaybackController: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                if let cache { await cache.resize(to: buffering.byteLimit) }
-                let stream = try await resolver.resolve(track: track, quality: quality, session: session)
+                let stream: PlaybackStream
+                if let episode {
+                    stream = try await podcasts.stream(episode: episode, session: session)
+                } else if let track {
+                    if let cache { await cache.resize(to: buffering.byteLimit) }
+                    stream = try await resolver.resolve(track: track, quality: quality, session: session)
+                } else {
+                    return
+                }
                 try requireCurrentLoad(generation)
                 availableQualities = stream.availableQualities
                 streamQuality = stream.quality
@@ -374,6 +551,7 @@ final class PlaybackController: ObservableObject {
     private func fail(_ failure: PlaybackFailure) {
         resumeAfterNetworkFailure = failure == .network && wantsPlayback
         wantsPlayback = false
+        checkpointPodcast()
         stopEngine()
         audioSession.deactivate()
         phase = .failed(failure)
@@ -385,6 +563,10 @@ final class PlaybackController: ObservableObject {
     }
 
     private func receive(_ event: PlaybackEngineEvent) {
+        if podcast != nil {
+            receivePodcastEvent(event)
+            return
+        }
         switch event {
         case .playing:
             guard wantsPlayback, loaded else { return }
@@ -425,6 +607,46 @@ final class PlaybackController: ObservableObject {
             phase = .ended
             if let duration { position = duration }
             persist()
+        case let .failed(failure):
+            fail(failure)
+            return
+        }
+        publishMetadata()
+    }
+
+    private func receivePodcastEvent(_ event: PlaybackEngineEvent) {
+        switch event {
+        case .playing:
+            guard wantsPlayback, loaded else { return }
+            if phase != .playing { lastEpisodeSample = position }
+            episodeHasProgress = true
+            phase = .playing
+        case .buffering:
+            guard wantsPlayback, loaded else { return }
+            lastEpisodeSample = nil
+            phase = .buffering
+        case let .position(elapsed, actualDuration):
+            guard loaded, elapsed.isFinite else { return }
+            if let known = knownDuration(actualDuration) { duration = known }
+            position = boundedPosition(elapsed)
+            if phase == .playing {
+                if let lastEpisodeSample {
+                    let delta = position - lastEpisodeSample
+                    if delta > 0 && delta <= 2 { episodeTimeSinceReport += delta }
+                }
+                lastEpisodeSample = position
+                episodeHasProgress = true
+                if episodeTimeSinceReport >= 10 { checkpointPodcast() }
+            }
+        case .ended:
+            guard wantsPlayback, loaded else { return }
+            wantsPlayback = false
+            engine.pause()
+            audioSession.deactivate()
+            phase = .ended
+            if let duration { position = duration }
+            episodeHasProgress = true
+            checkpointPodcast(played: true)
         case let .failed(failure):
             fail(failure)
             return
@@ -474,6 +696,7 @@ final class PlaybackController: ObservableObject {
         if previous != path { cancelPrefetch() }
         guard path != .unavailable else { return }
         lastConnectedNetwork = path
+        if previous == .unavailable, let session { flushPodcastProgress(for: session) }
         if resumeAfterNetworkFailure, previous == .unavailable {
             play()
         } else if oldQuality != preferredQuality {
@@ -485,7 +708,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func reloadForQualityChange() {
-        guard queue.current != nil, !loadedFromDisk else { return }
+        guard podcast == nil, queue.current != nil, !loadedFromDisk else { return }
         if wantsPlayback {
             loadCurrent()
         } else if loaded {
@@ -494,6 +717,12 @@ final class PlaybackController: ObservableObject {
     }
 
     private func publishMetadata() {
+        if let podcast {
+            remote.publish(PlaybackMetadata(track: nil, podcast: podcast, position: position, duration: duration,
+                                            isPlaying: phase == .playing, wantsPlayback: wantsPlayback,
+                                            queueIndex: 0, queueCount: 1, canSkipNext: false, canSkipPrevious: false))
+            return
+        }
         let metadata = queue.current.flatMap { entry in
             queue.currentIndex.map { index in
                 PlaybackMetadata(track: entry.track, position: position, duration: duration, isPlaying: phase == .playing,
@@ -551,7 +780,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func prefetchUpcoming() {
-        guard phase == .playing, let cache, let session else { return }
+        guard podcast == nil, phase == .playing, let cache, let session else { return }
         let upcoming = buffering.upcoming(in: queue, on: network)
         let warmOnly = upcoming.isEmpty && network != .unavailable && preferredQuality != .original
         let next = warmOnly ? queue.next(automatic: true) : nil
@@ -580,11 +809,16 @@ final class PlaybackController: ObservableObject {
     }
 
     private func boundedPosition(_ seconds: TimeInterval) -> TimeInterval {
-        max(0, min(seconds, duration ?? seconds))
+        guard seconds.isFinite else { return 0 }
+        return max(0, min(seconds, duration ?? seconds))
     }
 
     private func knownDuration(_ track: LibraryTrack?) -> TimeInterval? {
-        guard let duration = track?.duration, duration.isFinite, duration > 0 else { return nil }
+        knownDuration(track?.duration)
+    }
+
+    private func knownDuration(_ duration: TimeInterval?) -> TimeInterval? {
+        guard let duration, duration.isFinite, duration > 0 else { return nil }
         return duration
     }
 }

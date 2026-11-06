@@ -71,8 +71,8 @@ final class AVPlaybackEngine: PlaybackEngining {
         reset()
         let generation = itemGeneration
         let asset: AVURLAsset
-        if let fileURL = stream.fileURL {
-            asset = AVURLAsset(url: fileURL)
+        if let url = stream.fileURL ?? stream.directURL {
+            asset = AVURLAsset(url: url)
         } else {
             var location = URLComponents()
             location.scheme = "downtify-stream"
@@ -333,6 +333,7 @@ extension PlaybackFailure {
         if let failure = error as? Self { return failure }
         switch error {
         case APIError.httpStatus(401, _): return .unauthorized
+        case ConnectionError.differentServer: return .differentServer
         case APIError.insecureTransportConsentRequired: return .insecureAddress
         case APIError.transportFailure: return .network
         case APIError.httpStatus, APIError.invalidAddress, APIError.invalidResponse, APIError.decodingFailure:

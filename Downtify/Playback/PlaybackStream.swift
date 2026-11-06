@@ -72,10 +72,11 @@ struct PlaybackStream: Sendable {
     let quality: PlaybackQuality
     let availableQualities: [PlaybackQuality]
     let fileURL: URL?
+    let directURL: URL?
     let read: @Sendable (ClosedRange<Int64>) async throws -> Data
 
     init(contentType: String, fileExtension: String, length: Int64, quality: PlaybackQuality,
-         availableQualities: [PlaybackQuality], fileURL: URL? = nil,
+         availableQualities: [PlaybackQuality], fileURL: URL? = nil, directURL: URL? = nil,
          read: @escaping @Sendable (ClosedRange<Int64>) async throws -> Data) {
         self.contentType = contentType
         self.fileExtension = fileExtension
@@ -83,6 +84,7 @@ struct PlaybackStream: Sendable {
         self.quality = quality
         self.availableQualities = availableQualities
         self.fileURL = fileURL
+        self.directURL = directURL
         self.read = read
     }
 }
@@ -198,7 +200,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     }
 }
 
-private struct RangeSource {
+struct RangeSource {
     struct Information {
         let length: Int64
         let mediaType: String

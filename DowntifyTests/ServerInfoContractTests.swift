@@ -25,6 +25,12 @@ final class ServerInfoContractTests: XCTestCase {
         }
     }
 
+    func testPodcastsRequireExplicitServerCapability() throws {
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1"}"#).supportsPodcasts)
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"podcasts":false}}"#).supportsPodcasts)
+        XCTAssertTrue(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"podcasts":true}}"#).supportsPodcasts)
+    }
+
     func testIncompatibleServers() throws {
         let fixtures = [
             #"{"product":"Downtify","api_version":2,"server_id":"server-1"}"#,

@@ -5,6 +5,7 @@ struct LibraryHomeView: View {
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
     @Binding var appearance: DowntifyAppearance
+    let connection: ConnectionService
     let signOut: @MainActor () async throws -> Void
     @EnvironmentObject private var collections: LibraryCollectionsModel
     @Environment(\.downtifyPalette) private var palette
@@ -18,7 +19,7 @@ struct LibraryHomeView: View {
     @State private var signOutError: String?
     @State private var tab = Tab.home
 
-    private enum Tab { case home, library, search, discover }
+    private enum Tab { case home, library, search, discover, podcasts }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -51,6 +52,10 @@ struct LibraryHomeView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
+
+            PodcastsView(connection: connection, playback: playback)
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .tabItem { Label("Podcasts", systemImage: "mic") }.tag(Tab.podcasts)
         }
         .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
