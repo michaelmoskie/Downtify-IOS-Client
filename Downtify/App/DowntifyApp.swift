@@ -10,8 +10,6 @@ struct DowntifyApp: App {
         WindowGroup {
             AppShellView(name: container.displayName, presentation: container.sessionPresentation,
                          library: container.libraryPresentation, playback: container.playback)
-                .tint(DowntifyStyle.accent)
-                .preferredColorScheme(.dark)
                 .environmentObject(container.artwork)
                 .environmentObject(container.offlineDownloads)
         }

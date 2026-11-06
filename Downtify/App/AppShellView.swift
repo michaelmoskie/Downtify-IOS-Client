@@ -4,7 +4,8 @@ struct AppShellView: View {
     let name: String
     @ObservedObject var presentation: SessionPresentationCoordinator
     @ObservedObject var library: LibraryPresentationModel
-    @ObservedObject var playback: PlaybackController
+    let playback: PlaybackController
+    @AppStorage(DowntifyAppearance.storageKey) private var appearance = DowntifyAppearance.system
 
     var body: some View {
         Group {
@@ -12,17 +13,17 @@ struct AppShellView: View {
             case .loading:
                 ProgressView("Checking saved connection…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(DowntifyStyle.background.ignoresSafeArea())
+                    .background(DowntifyPalette(oled: appearance == .oled).background.ignoresSafeArea())
             case let .connection(error):
                 FoundationView(name: name, recoverableError: error, retryAction: presentation.retry,
                                connection: presentation.connectionService, discovery: presentation.serverDiscovery,
                                deviceName: name)
             case let .library(server):
-                LibraryHomeView(server: server, library: library, playback: playback,
-                                signOut: { try presentation.connectionService.signOut() })
+                LibraryHomeView(server: server, library: library, playback: playback, appearance: $appearance,
+                                signOut: { try await presentation.connectionService.signOut() })
             }
         }
-        .tint(DowntifyStyle.accent)
+        .downtifyAppearance(appearance)
         .task { presentation.start(); library.start() }
     }
 }
@@ -30,12 +31,15 @@ struct AppShellView: View {
 private struct LibraryHomeView: View {
     let server: SessionPresentationCoordinator.ServerSummary
     @ObservedObject var library: LibraryPresentationModel
-    @ObservedObject var playback: PlaybackController
-    let signOut: () throws -> Void
+    let playback: PlaybackController
+    @Binding var appearance: DowntifyAppearance
+    let signOut: @MainActor () async throws -> Void
+    @Environment(\.downtifyPalette) private var palette
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var searchText = ""
     @State private var showingSignOutConfirmation = false
     @State private var signOutError: String?
-    @State private var showingNowPlaying = false
 
     private var sortedTracks: [LibraryTrack] {
         LibraryTrackOrdering.sorted(library.tracks)
@@ -45,71 +49,73 @@ private struct LibraryHomeView: View {
         LibraryTrackOrdering.matching(sortedTracks, query: searchText)
     }
 
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var coverTracks: [LibraryTrack] {
+        let limit = horizontalSizeClass == .regular ? 4 : 3
+        var albums = Set<String>()
+        var covers: [LibraryTrack] = []
+        for track in sortedTracks where track.hasCover {
+            let album = track.albumID.isEmpty ? track.album : track.albumID
+            guard albums.insert(album).inserted else { continue }
+            covers.append(track)
+            if covers.count == limit { break }
+        }
+        return covers
+    }
+
     var body: some View {
         NavigationStack {
             trackContent
-            .navigationTitle("Library")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        if let username = server.username {
-                            Label("Signed in as \(username)", systemImage: "person.crop.circle")
+                .navigationTitle("Library")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            if let username = server.username {
+                                Label("Signed in as \(username)", systemImage: "person.crop.circle")
+                            }
+                            Picker("Appearance", selection: $appearance) {
+                                ForEach(DowntifyAppearance.allCases) { option in
+                                    Text(option.label).tag(option)
+                                }
+                            }
+                            Button("Sign out", role: .destructive) { showingSignOutConfirmation = true }
+                        } label: {
+                            Image(systemName: "person.crop.circle")
                         }
-                        Button("Sign out", role: .destructive) { showingSignOutConfirmation = true }
-                    } label: {
-                        Image(systemName: "person.crop.circle")
+                        .accessibilityLabel("Account options")
                     }
-                    .accessibilityLabel("Account options")
                 }
-            }
-            .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
-                Button("Sign out", role: .destructive) {
-                    do { try signOut() } catch { signOutError = "Could not sign out. Please try again." }
+                .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
+                    Button("Sign out", role: .destructive) {
+                        Task {
+                            do { try await signOut() } catch { signOutError = "Could not sign out. Please try again." }
+                        }
+                    }
+                } message: {
+                    Text("You can reconnect to this server at any time.")
                 }
-            } message: {
-                Text("You can reconnect to this server at any time.")
-            }
-            .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
-                Button("OK", role: .cancel) { signOutError = nil }
-            } message: { Text(signOutError ?? "") }
-            .searchable(text: $searchText, prompt: "Songs, artists, albums")
-            .background(DowntifyStyle.background.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if playback.queue.current != nil {
-                    MiniPlayerView(playback: playback) { showingNowPlaying = true }
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                        .background(.ultraThinMaterial)
-                }
-            }
-            .sheet(isPresented: $showingNowPlaying) {
-                NowPlayingView(playback: playback)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
+                .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
+                    Button("OK", role: .cancel) { signOutError = nil }
+                } message: { Text(signOutError ?? "") }
+                .searchable(text: $searchText, prompt: "Songs, artists, albums")
+                .background(palette.background.ignoresSafeArea())
+                .toolbarBackground(palette.background, for: .navigationBar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            PlaybackDock(playback: playback)
         }
     }
 
     private var trackContent: some View {
-        ScrollView {
+        let tracks = visibleTracks
+        return ScrollView {
             VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
-                if library.tracks.isEmpty {
-                    libraryEmptyState
-                }
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(server.name).font(.headline).accessibilityAddTraits(.isHeader)
-                        if let username = server.username {
-                            Text("Signed in as \(username)").font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText)
-                        }
-                    }
-                    Spacer()
-                    Button { Task { await library.refresh() } } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
-                    }
-                    .accessibilityLabel("Refresh library")
-                    .disabled(library.state == .refreshing || library.state == .loading)
+                if !isSearching {
+                    libraryHeader
                 }
                 if !library.tracks.isEmpty, case .cachedError(let message) = library.state {
                     Label(message, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
@@ -118,156 +124,211 @@ private struct LibraryHomeView: View {
                 }
                 if !library.tracks.isEmpty, case .storageFailure(let message) = library.state {
                     Label(message, systemImage: "externaldrive.badge.exclamationmark")
-                        .font(.subheadline).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                        .font(.subheadline).foregroundStyle(DowntifyStyle.error).fixedSize(horizontal: false, vertical: true)
                 }
                 if library.state == .refreshing { ProgressView("Refreshing library…").font(.caption) }
-                if visibleTracks.isEmpty {
+                if library.tracks.isEmpty {
+                    libraryEmptyState
+                } else if tracks.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                         .frame(maxWidth: .infinity, minHeight: 220)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(visibleTracks.enumerated()), id: \.element.id) { index, track in
+                        ForEach(tracks) { track in
                             Button {
-                                playback.replaceQueue(visibleTracks, startingAt: index)
+                                guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+                                playback.replaceQueue(tracks, startingAt: index)
                             } label: {
                                 TrackRow(track: track)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("\(track.title), \(track.artist), \(track.album), \(durationText(track.duration))")
+                            .accessibilityLabel(Text(track.accessibleMetadata))
+                            .accessibilityValue(spokenDuration(track.duration))
                             .accessibilityHint("Play this song and replace the current queue")
-                            if index < visibleTracks.count - 1 { Divider().padding(.leading, 68) }
+                            if track.id != tracks.last?.id { Divider().padding(.leading, 80) }
                         }
                     }
-                    .background(DowntifyStyle.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(palette.surface, in: RoundedRectangle(cornerRadius: 20))
                 }
             }
             .padding(.horizontal, DowntifyStyle.Space.regular)
-            .padding(.top, DowntifyStyle.Space.small)
+            .padding(.vertical, DowntifyStyle.Space.small)
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
         .refreshable { await library.refresh() }
     }
 
-    @ViewBuilder
-    private var libraryEmptyState: some View {
-        switch library.state {
-        case .loading:
-            ProgressView("Loading your library…")
-                .frame(maxWidth: .infinity, minHeight: 220)
-        case .empty:
-            VStack(spacing: 12) {
-                ContentUnavailableView("Your library is empty", systemImage: "music.note.list",
-                                       description: Text("Music saved on this server will appear here."))
-                retryLibraryButton
+    private var libraryHeader: some View {
+        DowntifyCard {
+            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+                let covers = coverTracks
+                if !covers.isEmpty, !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: DowntifyStyle.Space.small) {
+                        ForEach(covers) { track in
+                            TrackArtwork(track: track, size: horizontalSizeClass == .regular ? 90 : 62)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(server.name)
+                            .font(.title2.weight(.semibold))
+                            .accessibilityAddTraits(.isHeader)
+                        if let username = server.username {
+                            Text("Signed in as \(username)")
+                                .font(.subheadline)
+                                .foregroundStyle(DowntifyStyle.secondaryText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { Task { await library.refresh() } } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .downtifyControlTarget()
+                    }
+                    .accessibilityLabel("Refresh library")
+                    .disabled(library.state == .refreshing || library.state == .loading)
+                }
             }
-                .frame(minHeight: 220)
-        case .cachedError(let message):
-            VStack(spacing: 12) {
-                ContentUnavailableView("Library unavailable", systemImage: "exclamationmark.triangle",
-                                       description: Text(message))
-                retryLibraryButton
-            }
-                .frame(minHeight: 220)
-        case .storageFailure(let message):
-            VStack(spacing: 12) {
-                ContentUnavailableView("Library unavailable", systemImage: "externaldrive.badge.exclamationmark",
-                                       description: Text(message))
-                retryLibraryButton
-            }
-                .frame(minHeight: 220)
-        default:
-            EmptyView()
         }
     }
 
-    private var retryLibraryButton: some View {
-        Button { Task { await library.refresh() } } label: {
-            Label("Try again", systemImage: "arrow.clockwise")
+    @ViewBuilder
+    private var libraryEmptyState: some View {
+        switch library.state {
+        case .loading, .refreshing:
+            ProgressView("Loading your library…")
+                .frame(maxWidth: .infinity, minHeight: 220)
+        case .empty, .ready:
+            DowntifyUnavailableView(title: "Your library is empty", symbol: "music.note.list",
+                                    message: Text("Music saved on this server will appear here."),
+                                    retry: refreshLibrary)
+        case .cachedError(let message):
+            DowntifyUnavailableView(title: "Library unavailable", symbol: "exclamationmark.triangle",
+                                    message: Text(message), retry: refreshLibrary)
+        case .storageFailure(let message):
+            DowntifyUnavailableView(title: "Library unavailable", symbol: "externaldrive.badge.exclamationmark",
+                                    message: Text(message), retry: refreshLibrary)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(library.state == .loading || library.state == .refreshing)
+    }
+
+    private func refreshLibrary() {
+        Task { await library.refresh() }
+    }
+}
+
+private extension LibraryTrack {
+    var displayTitle: String { title.isEmpty ? String(localized: "Unknown title") : title }
+    var displayArtist: String { artist.isEmpty ? String(localized: "Unknown artist") : artist }
+    var accessibleMetadata: String {
+        album.isEmpty ? String(localized: "\(displayTitle), \(displayArtist)")
+            : String(localized: "\(displayTitle), \(displayArtist), \(album)")
     }
 }
 
 private struct TrackRow: View {
     let track: LibraryTrack
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
-            TrackArtwork(track: track, size: 48)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track.title.isEmpty ? "Unknown title" : track.title)
-                    .font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
-                Text(track.artist.isEmpty ? "Unknown artist" : track.artist)
-                    .font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
-                if !track.album.isEmpty {
-                    Text(track.album).font(.caption).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
+        DowntifyMediaRow(title: track.displayTitle, subtitle: track.displayArtist,
+                         detail: track.album.isEmpty ? nil : track.album) {
+            TrackArtwork(track: track, size: 56)
+        } accessory: {
             Text(durationText(track.duration))
-                .font(.caption.monospacedDigit()).foregroundStyle(DowntifyStyle.secondaryText)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(DowntifyStyle.secondaryText)
                 .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .frame(minHeight: 68)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+/// Lives at the navigation boundary so playback updates do not invalidate library rows.
+private struct PlaybackDock: View {
+    @ObservedObject var playback: PlaybackController
+    @Environment(\.downtifyPalette) private var palette
+    @State private var showingNowPlaying = false
+
+    var body: some View {
+        Group {
+            if playback.queue.current != nil {
+                MiniPlayerView(playback: playback) { showingNowPlaying = true }
+                    .frame(maxWidth: 760)
+                    .padding(.horizontal, DowntifyStyle.Space.regular)
+                    .padding(.vertical, DowntifyStyle.Space.small)
+                    .frame(maxWidth: .infinity)
+                    .background(palette.background)
+            }
+        }
+        .sheet(isPresented: $showingNowPlaying) {
+            NowPlayingView(playback: playback)
+                .presentationDragIndicator(.visible)
+        }
     }
 }
 
 private struct MiniPlayerView: View {
     @ObservedObject var playback: PlaybackController
     let open: () -> Void
+    @Environment(\.downtifyPalette) private var palette
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var track: LibraryTrack? { playback.queue.current?.track }
     private var isActive: Bool { playback.phase == .playing || playback.phase == .buffering || playback.phase == .loading }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: open) {
-                HStack(spacing: 10) {
-                    TrackArtwork(track: track, size: 42)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(track?.title.isEmpty == false ? track!.title : "Unknown title")
-                            .font(.subheadline.weight(.semibold)).lineLimit(1)
-                        Text(track?.artist.isEmpty == false ? track!.artist : "Unknown artist")
-                            .font(.caption).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 4))
+        layout {
+            if let track {
+                Button(action: open) {
+                    DowntifyMediaRow(title: track.displayTitle, subtitle: track.displayArtist, accessibilityLineLimit: 2) {
+                        TrackArtwork(track: track, size: 44)
+                    } accessory: {
+                        EmptyView()
                     }
-                    Spacer(minLength: 4)
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Now playing, \(track.displayTitle) by \(track.displayArtist)")
+                .accessibilityHint("Open Now Playing")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Now playing, \(track?.title ?? "Unknown title") by \(track?.artist ?? "Unknown artist")")
-            .accessibilityHint("Open the Now Playing screen")
-
-            if case .failed = playback.phase {
-                Button { playback.play() } label: { Image(systemName: "arrow.clockwise") }
+            HStack(spacing: 4) {
+                if case .failed = playback.phase {
+                    Button { playback.play() } label: {
+                        Image(systemName: "arrow.clockwise").downtifyControlTarget()
+                    }
                     .accessibilityLabel("Retry playback")
-            } else {
-                Button { playback.togglePlayback() } label: {
-                    Image(systemName: isActive ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 42, height: 42)
-                        .contentShape(Rectangle())
+                } else {
+                    Button { playback.togglePlayback() } label: {
+                        Image(systemName: isActive ? "pause.fill" : "play.fill")
+                            .downtifyControlTarget()
+                    }
+                    .accessibilityLabel(isActive ? "Pause" : "Play")
                 }
-                .accessibilityLabel(isActive ? "Pause" : "Play")
-                .disabled(track == nil)
-            }
-            Button { playback.skipNext() } label: { Image(systemName: "forward.end.fill") }
+                Button { playback.skipNext() } label: {
+                    Image(systemName: "forward.end.fill").downtifyControlTarget()
+                }
                 .accessibilityLabel("Next track")
                 .disabled(playback.queue.next(automatic: false) == nil)
+            }
+            .font(.body.weight(.semibold))
+            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(DowntifyStyle.surface, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 16))
         .overlay(alignment: .bottom) {
-            if let duration = playback.duration, duration > 0 {
+            if let duration = playback.duration, duration.isFinite, duration > 0 {
                 ProgressView(value: min(playback.position, duration), total: duration)
-                    .tint(DowntifyStyle.accent).frame(height: 2).padding(.horizontal, 10)
+                    .padding(.horizontal, 12)
                     .accessibilityHidden(true)
+                    .transaction { if reduceMotion { $0.animation = nil } }
             }
         }
     }
@@ -276,98 +337,148 @@ private struct MiniPlayerView: View {
 private struct NowPlayingView: View {
     @ObservedObject var playback: PlaybackController
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.downtifyPalette) private var palette
+    @Environment(\.dismiss) private var dismiss
     @State private var showingQueue = false
 
     private var track: LibraryTrack? { playback.queue.current?.track }
     private var activelyPlaying: Bool { playback.phase == .playing || playback.phase == .buffering || playback.phase == .loading }
 
+    private var usesWideLayout: Bool {
+        horizontalSizeClass == .regular && !dynamicTypeSize.isAccessibilitySize
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                TrackArtwork(track: track, size: artworkSize)
-                    .padding(.top, 28)
-                    .accessibilityLabel("Album artwork")
-                VStack(spacing: 5) {
-                    Text(track?.title.isEmpty == false ? track!.title : "Unknown title")
-                        .font(.title2.weight(.bold)).multilineTextAlignment(.center)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
-                    Text(track?.artist.isEmpty == false ? track!.artist : "Unknown artist")
-                        .font(.title3).foregroundStyle(DowntifyStyle.secondaryText).multilineTextAlignment(.center)
-                    if let album = track?.album, !album.isEmpty {
-                        Text(album).font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText)
+        NavigationStack {
+            ScrollView {
+                let layout = usesWideLayout
+                    ? AnyLayout(HStackLayout(alignment: .center, spacing: DowntifyStyle.Space.large))
+                    : AnyLayout(VStackLayout(spacing: DowntifyStyle.Space.large))
+                layout {
+                    TrackArtwork(track: track, size: artworkSize)
+                        .accessibilityHidden(true)
+                    VStack(spacing: DowntifyStyle.Space.regular) {
+                        trackMetadata
+                        phaseDescription
+                            .font(.subheadline)
+                            .foregroundStyle(DowntifyStyle.secondaryText)
                             .multilineTextAlignment(.center)
+                        timeline
+                        transportControls
+                        queueControls
                     }
+                    .frame(maxWidth: 400)
                 }
-                phaseDescription
-                    .font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText)
-                    .frame(minHeight: 22)
-                    timeline
-                HStack(spacing: 38) {
-                    Button { playback.skipPrevious() } label: {
-                        Image(systemName: "backward.end.fill").font(.title2)
-                    }
-                    .accessibilityLabel("Previous track")
-                    .disabled(track == nil)
-                    if case .failed = playback.phase {
-                        Button { playback.play() } label: {
-                            Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 56))
-                        }
-                        .accessibilityLabel("Retry playback")
-                    } else {
-                        Button { playback.togglePlayback() } label: {
-                            Image(systemName: activelyPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 56))
-                        }
-                        .accessibilityLabel(activelyPlaying ? "Pause" : "Play")
-                        .disabled(track == nil)
-                    }
-                    Button { playback.skipNext() } label: {
-                        Image(systemName: "forward.end.fill").font(.title2)
-                    }
-                    .accessibilityLabel("Next track")
-                    .disabled(playback.queue.next(automatic: false) == nil)
-                }
-                .buttonStyle(.plain)
-                HStack(spacing: 28) {
-                    Button { playback.setShuffle(playback.queue.shuffledIDs == nil) } label: {
-                        Label("Shuffle", systemImage: "shuffle")
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(playback.queue.shuffledIDs == nil ? DowntifyStyle.secondaryText : DowntifyStyle.accent)
-                    }
-                    .accessibilityLabel("Shuffle")
-                    .accessibilityValue(playback.queue.shuffledIDs == nil ? "Off" : "On")
-                    .accessibilityAddTraits(playback.queue.shuffledIDs == nil ? [] : .isSelected)
-
-                    Button { showingQueue = true } label: {
-                        Label("Queue", systemImage: "list.bullet")
-                    }
-                    .accessibilityLabel("Play queue")
-
-                    Button { playback.setRepeat(nextRepeatMode) } label: {
-                        Image(systemName: repeatSymbol)
-                            .foregroundStyle(playback.queue.repeatMode == .off ? DowntifyStyle.secondaryText : DowntifyStyle.accent)
-                    }
-                    .accessibilityLabel("Repeat")
-                    .accessibilityValue(repeatDescription)
-                    .accessibilityHint("Double tap to change repeat mode")
-                }
-                .buttonStyle(.plain)
-                .font(.title3)
-                .padding(.bottom, 28)
+                .padding(DowntifyStyle.Space.regular)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 24)
-            .frame(maxWidth: 560)
-            .frame(maxWidth: .infinity)
+            .background(palette.background.ignoresSafeArea())
+            .navigationTitle("Now Playing")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(palette.background, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
-        .background(DowntifyStyle.background.ignoresSafeArea())
-        .tint(DowntifyStyle.accent)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Now Playing")
         .sheet(isPresented: $showingQueue) {
             PlaybackQueueSheet(playback: playback)
-                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private var trackMetadata: some View {
+        VStack(spacing: 5) {
+            Text(track?.displayTitle ?? String(localized: "Unknown title"))
+                .font(.title2.weight(.bold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                .accessibilityAddTraits(.isHeader)
+            Text(track?.displayArtist ?? String(localized: "Unknown artist"))
+                .font(.title3)
+                .foregroundStyle(DowntifyStyle.secondaryText)
+            if let album = track?.album, !album.isEmpty {
+                Text(album)
+                    .font(.subheadline)
+                    .foregroundStyle(DowntifyStyle.secondaryText)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: DowntifyStyle.Space.regular) {
+            Button { playback.skipPrevious() } label: {
+                Image(systemName: "backward.end.fill").font(.title2)
+                    .downtifyControlTarget()
+            }
+            .accessibilityLabel("Previous track")
+            .disabled(track == nil)
+            if case .failed = playback.phase {
+                Button { playback.play() } label: {
+                    Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 56))
+                        .downtifyControlTarget()
+                }
+                .accessibilityLabel("Retry playback")
+            } else {
+                Button { playback.togglePlayback() } label: {
+                    Image(systemName: activelyPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 56)).downtifyControlTarget()
+                }
+                .accessibilityLabel(activelyPlaying ? "Pause" : "Play")
+                .disabled(track == nil)
+            }
+            Button { playback.skipNext() } label: {
+                Image(systemName: "forward.end.fill").font(.title2)
+                    .downtifyControlTarget()
+            }
+            .accessibilityLabel("Next track")
+            .disabled(playback.queue.next(automatic: false) == nil)
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private var queueControls: some View {
+        HStack(spacing: DowntifyStyle.Space.regular) {
+            Button { playback.setShuffle(playback.queue.shuffledIDs == nil) } label: {
+                Image(systemName: "shuffle")
+                    .foregroundStyle(playback.queue.shuffledIDs == nil ? DowntifyStyle.secondaryText : DowntifyStyle.accent)
+                    .downtifyControlTarget()
+                    .background {
+                        if playback.queue.shuffledIDs != nil {
+                            RoundedRectangle(cornerRadius: 10).strokeBorder(DowntifyStyle.accent)
+                        }
+                    }
+            }
+            .accessibilityLabel("Shuffle")
+            .accessibilityValue(playback.queue.shuffledIDs == nil ? "Off" : "On")
+            .accessibilityAddTraits(playback.queue.shuffledIDs == nil ? [] : .isSelected)
+
+            Button { showingQueue = true } label: {
+                Image(systemName: "list.bullet").downtifyControlTarget()
+            }
+            .accessibilityLabel("Play queue")
+
+            Button { playback.setRepeat(nextRepeatMode) } label: {
+                Image(systemName: repeatSymbol)
+                    .foregroundStyle(playback.queue.repeatMode == .off ? DowntifyStyle.secondaryText : DowntifyStyle.accent)
+                    .downtifyControlTarget()
+                    .background {
+                        if playback.queue.repeatMode != .off {
+                            RoundedRectangle(cornerRadius: 10).strokeBorder(DowntifyStyle.accent)
+                        }
+                    }
+            }
+            .accessibilityLabel("Repeat")
+            .accessibilityValue(repeatDescription)
+            .accessibilityHint("Changes repeat mode")
+        }
+        .buttonStyle(.borderless)
+        .font(.title3)
     }
 
     private var nextRepeatMode: PlaybackRepeat {
@@ -390,7 +501,10 @@ private struct NowPlayingView: View {
         }
     }
 
-    private var artworkSize: CGFloat { dynamicTypeSize.isAccessibilitySize ? 190 : 260 }
+    private var artworkSize: CGFloat {
+        if usesWideLayout { return 200 }
+        return dynamicTypeSize.isAccessibilitySize ? 172 : 240
+    }
 
     @ViewBuilder
     private var phaseDescription: some View {
@@ -403,7 +517,7 @@ private struct NowPlayingView: View {
         case .ended: Text("Finished")
         case .failed(let failure):
             Label(playbackFailureMessage(failure), systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(DowntifyStyle.error)
         }
     }
 
@@ -413,7 +527,7 @@ private struct NowPlayingView: View {
                 Slider(value: Binding(get: { min(playback.position, duration) }, set: { playback.seek(to: $0) }),
                        in: 0...duration)
                     .accessibilityLabel("Playback position")
-                    .accessibilityValue("\(durationText(playback.position)) of \(durationText(duration))")
+                    .accessibilityValue("\(spokenDuration(playback.position)) of \(spokenDuration(duration))")
                 HStack {
                     Text(durationText(playback.position))
                     Spacer()
@@ -434,6 +548,7 @@ private struct NowPlayingView: View {
 private struct PlaybackQueueSheet: View {
     @ObservedObject var playback: PlaybackController
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.downtifyPalette) private var palette
 
     private var visibleEntries: [PlaybackQueueEntry] {
         guard let currentIndex = playback.queue.currentIndex else { return [] }
@@ -446,17 +561,23 @@ private struct PlaybackQueueSheet: View {
         NavigationStack {
             List {
                 if visibleEntries.isEmpty {
-                    ContentUnavailableView("Queue is empty", systemImage: "music.note.list")
+                    DowntifyUnavailableView(title: "Queue is empty", symbol: "music.note.list")
+                        .listRowBackground(palette.surface)
                 } else {
                     if let current = visibleEntries.first {
                         QueueEntryRow(entry: current, isCurrent: true, playback: playback)
+                            .listRowBackground(palette.surface)
                     }
                     ForEach(upcomingEntries) { entry in
                         QueueEntryRow(entry: entry, isCurrent: false, playback: playback)
+                            .listRowBackground(palette.surface)
                     }
                     .onMove(perform: moveEntries)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(palette.background.ignoresSafeArea())
+            .toolbarBackground(palette.background, for: .navigationBar)
             .navigationTitle("Play Queue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -487,30 +608,30 @@ private struct QueueEntryRow: View {
     @ObservedObject var playback: PlaybackController
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DowntifyStyle.Space.small) {
             Button { playback.select(entry.id) } label: {
-                HStack(spacing: 12) {
-                    TrackArtwork(track: entry.track, size: 40)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(entry.track.title.isEmpty ? "Unknown title" : entry.track.title).lineLimit(1)
-                        Text(entry.track.artist.isEmpty ? "Unknown artist" : entry.track.artist)
-                            .font(.caption).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
+                DowntifyMediaRow(title: entry.track.displayTitle, subtitle: entry.track.displayArtist) {
+                    TrackArtwork(track: entry.track, size: 44)
+                } accessory: {
+                    if isCurrent {
+                        Label("Current track", systemImage: "speaker.wave.2.fill")
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(DowntifyStyle.accent)
                     }
-                    Spacer(minLength: 0)
-                    if isCurrent { Text("Playing").font(.caption).foregroundStyle(DowntifyStyle.accent) }
                 }
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(entry.track.title), \(entry.track.artist)\(isCurrent ? ", currently playing" : "")")
-            .accessibilityHint(isCurrent ? "Currently playing" : "Play this queue entry")
+            .accessibilityLabel(Text(entry.track.accessibleMetadata))
+            .accessibilityAddTraits(isCurrent ? .isSelected : [])
+            .accessibilityHint(isCurrent ? "Current queue entry" : "Play this queue entry")
 
             Button(role: .destructive) { playback.remove(entry.id) } label: {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(DowntifyStyle.secondaryText)
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(DowntifyStyle.secondaryText)
+                    .downtifyControlTarget()
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove \(entry.track.title) from queue")
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Remove \(entry.track.displayTitle) from queue")
         }
         .padding(.vertical, 3)
     }
@@ -570,6 +691,7 @@ private struct TrackArtwork: View {
     let size: CGFloat
     @EnvironmentObject private var artwork: ArtworkLoader
     @State private var image: UIImage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var requestSize: Int { size > 150 ? 600 : 150 }
 
@@ -579,14 +701,20 @@ private struct TrackArtwork: View {
                 Image(uiImage: image).resizable().scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
+                    .transition(.opacity)
             } else {
                 ArtworkPlaceholder(size: size)
+                    .transition(.opacity)
             }
         }
         .task(id: track) {
             image = nil
-            guard let track else { return }
-            image = await artwork.image(for: track, size: requestSize)
+            guard let track, track.hasCover else { return }
+            let loadedImage = await artwork.image(for: track, size: requestSize)
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeIn(duration: 0.18)) {
+                image = loadedImage
+            }
         }
     }
 }
@@ -623,7 +751,64 @@ private func playbackFailureMessage(_ failure: PlaybackFailure) -> String {
 }
 
 private func durationText(_ duration: Double) -> String {
-    guard duration.isFinite, duration >= 0 else { return "—:—" }
-    let seconds = Int(duration.rounded())
+    guard duration >= 0, let seconds = Int(exactly: duration.rounded()) else { return "—:—" }
     return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
 }
+
+private func spokenDuration(_ duration: Double) -> String {
+    guard duration >= 0, let seconds = Int(exactly: duration.rounded()) else {
+        return String(localized: "Duration unavailable")
+    }
+    return Duration.seconds(seconds)
+        .formatted(.units(allowed: [.minutes, .seconds], width: .wide, zeroValueUnits: .show(length: 1)))
+}
+
+#if DEBUG
+private struct LibraryDesignPreviews: PreviewProvider {
+    private static let sample = LibraryTrack(
+        id: "preview-track", file: "", title: "On the Other Side of the City at Dawn",
+        artist: "The Long Distance Orchestra", artists: [], album: "Quiet Streets",
+        albumArtist: "", albumID: "", artistID: "", trackNumber: 1, year: "", duration: 223,
+        codec: "", bitrate: 0, sampleRate: 0, channels: 0, size: 0, added: 0,
+        hasCover: false, isExplicit: false, playlists: []
+    )
+
+    static var previews: some View {
+        Group {
+            NavigationStack {
+                ScrollView {
+                    DowntifyCard { TrackRow(track: sample) }
+                        .padding()
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity)
+                }
+                .background(DowntifyPalette().background)
+                .navigationTitle("Library")
+            }
+            .downtifyAppearance(.light)
+            .environmentObject(ArtworkLoader(connection: ConnectionService()))
+            .previewDisplayName("Library row · Light")
+
+            NavigationStack {
+                ScrollView {
+                    VStack {
+                        DowntifyCard { TrackRow(track: sample) }
+                        DowntifyUnavailableView(title: "Library unavailable", symbol: "exclamationmark.triangle",
+                                                message: Text("The server could not be reached."), retry: {})
+                    }
+                    .padding()
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(Color.black)
+                .navigationTitle("Library")
+            }
+            .downtifyAppearance(.oled)
+            .environmentObject(ArtworkLoader(connection: ConnectionService()))
+            .dynamicTypeSize(.accessibility3)
+            .environment(\.accessibilityReduceMotion, true)
+            .previewDisplayName("Library error · OLED, Large Type")
+        }
+    }
+}
+#endif

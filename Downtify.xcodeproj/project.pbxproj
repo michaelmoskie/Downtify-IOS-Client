@@ -5,6 +5,8 @@
 	};
 	objectVersion = 56;
 	objects = {
+		00000000000000000000006B = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		00000000000000000000006C = { isa = PBXBuildFile; fileRef = 00000000000000000000006B; };
 		000000000000000000000069 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloadsTests.swift; sourceTree = "<group>"; };
 		00000000000000000000006A = { isa = PBXBuildFile; fileRef = 000000000000000000000069; };
 		000000000000000000000067 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDownloadQueue.swift; sourceTree = "<group>"; };
@@ -353,6 +355,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000005,
+				00000000000000000000006B,
 			);
 			sourceTree = "<group>";
 			path = Presentation;
@@ -466,6 +469,7 @@
 				000000000000000000000054,
 				000000000000000000000056,
 				000000000000000000000006,
+				00000000000000000000006C,
 				000000000000000000000008,
 				00000000000000000000002A,
 				00000000000000000000002E,

@@ -1,31 +1,5 @@
 import SwiftUI
 
-/// Shared semantic colors, spacing, and surfaces used throughout the app.
-enum DowntifyStyle {
-    static let accent = Color(red: 0.25, green: 0.73, blue: 0.48)
-    static let background = Color(uiColor: .systemGroupedBackground)
-    static let surface = Color(uiColor: .secondarySystemGroupedBackground)
-    static let secondaryText = Color(uiColor: .secondaryLabel)
-
-    enum Space {
-        static let small: CGFloat = 8
-        static let regular: CGFloat = 16
-        static let large: CGFloat = 24
-        static let section: CGFloat = 36
-    }
-}
-
-struct DowntifyCard<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        content
-            .padding(DowntifyStyle.Space.regular)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DowntifyStyle.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-}
-
 @MainActor
 struct FoundationView: View {
     let name: String
@@ -48,6 +22,7 @@ struct FoundationView: View {
         _model = StateObject(wrappedValue: ConnectionFlowModel(connection: connection, discovery: discovery, deviceName: deviceName))
     }
 
+    @Environment(\.downtifyPalette) private var palette
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var contentWidth: CGFloat {
@@ -68,7 +43,7 @@ struct FoundationView: View {
                 .padding(.vertical, DowntifyStyle.Space.section)
                 .frame(minHeight: geometry.size.height, alignment: .center)
             }
-            .background(DowntifyStyle.background.ignoresSafeArea())
+            .background(palette.background.ignoresSafeArea())
         }
         .tint(DowntifyStyle.accent)
     }
@@ -77,7 +52,7 @@ struct FoundationView: View {
         HStack(spacing: 12) {
             Image(systemName: "waveform")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(DowntifyStyle.onAccent)
                 .frame(width: 48, height: 48)
                 .background(DowntifyStyle.accent.gradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                 .accessibilityHidden(true)
@@ -112,7 +87,7 @@ struct FoundationView: View {
                 if let recoverableError {
                     Text(recoverableError)
                         .font(.body)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DowntifyStyle.error)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Try again") {
                         retryAction?()
@@ -124,9 +99,9 @@ struct FoundationView: View {
                     .keyboardType(.URL).textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Server address")
                 Button { model.probeAddress() } label: {
-                    if model.isWorking { ProgressView().frame(maxWidth: .infinity) }
+                    if model.isWorking { ProgressView().frame(maxWidth: .infinity).accessibilityLabel("Connecting to server") }
                     else { Text("Connect to server").frame(maxWidth: .infinity) }
-                }.buttonStyle(.borderedProminent).disabled(model.isWorking || model.address.isEmpty)
+                }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.address.isEmpty)
 
                 Button { model.startDiscovery() } label: {
                     Label(model.isDiscovering ? "Searching local network…" : "Find servers on this network", systemImage: "dot.radiowaves.left.and.right")
@@ -137,7 +112,7 @@ struct FoundationView: View {
                     }
                 }
                 if model.discoveryMessage != nil { Text(model.discoveryMessage!).font(.caption).foregroundStyle(DowntifyStyle.secondaryText) }
-                if let error = model.error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+                if let error = model.error { Text(error).foregroundStyle(DowntifyStyle.error).fixedSize(horizontal: false, vertical: true) }
 
                 if let target = model.target {
                     Divider()
@@ -147,11 +122,11 @@ struct FoundationView: View {
                         Text("Sign in with password").font(.subheadline.weight(.semibold))
                         TextField("Username", text: $model.username).textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
                         SecureField("Password", text: $model.password).textFieldStyle(.roundedBorder)
-                        Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Sign in") { model.signIn() }.buttonStyle(.borderedProminent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.username.isEmpty || model.password.isEmpty)
+                        Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Sign in") { model.signIn() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.username.isEmpty || model.password.isEmpty)
                     }
                     Text("Pairing code").font(.subheadline.weight(.semibold))
                     TextField("Enter code", text: $model.pairingCode).textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
-                    Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Pair device") { model.pair() }.buttonStyle(.borderedProminent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.pairingCode.isEmpty)
+                    Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Pair device") { model.pair() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.pairingCode.isEmpty)
                     if model.cooldownSeconds > 0 {
                         Text("Sign-in is paused for this server. Try again in \(model.cooldownSeconds) seconds.")
                             .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
