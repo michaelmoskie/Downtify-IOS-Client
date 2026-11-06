@@ -4,16 +4,25 @@ enum MobileAPIV1 {
 
     struct ServerInfoDTO: Decodable {
         struct Capabilities: Decodable {
+            struct Transcoding: Decodable {
+                let available: Bool?
+                let formats: [String]?
+                let bitrates: [Int]?
+            }
+
             let passwordSignIn: Bool?
+            let transcoding: Transcoding?
 
             enum CodingKeys: String, CodingKey {
                 case passwordSignIn = "password_sign_in"
+                case transcoding
             }
         }
 
         let product: String
         let apiVersion: Int
         let serverID: String
+        let name: String?
         let capabilities: Capabilities?
 
         var supportsPasswordSignIn: Bool {
@@ -25,7 +34,7 @@ enum MobileAPIV1 {
         }
 
         enum CodingKeys: String, CodingKey {
-            case product, capabilities
+            case product, name, capabilities
             case apiVersion = "api_version"
             case serverID = "server_id"
         }

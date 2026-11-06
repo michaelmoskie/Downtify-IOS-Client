@@ -1,19 +1,34 @@
 # Downtify iOS
 
-This SwiftUI foundation runs as an iPhone and iPad app targeting iOS 17 and later. The opening screen identifies the build and explains that server setup is unavailable. The only wire contract in this foundation is the audited subset of the public mobile API v1 server-info response. The tests use synthetic fixtures based on the parity audit.
+Downtify is a SwiftUI iPhone and iPad app targeting iOS 17 and later. It includes server connection and library flows, local library sync, and a playback experience with a persistent queue, queue editing, shuffle/repeat, and background and lock-screen controls. Automated tests use synthetic fixtures; the checklist below calls out manual simulator work that still needs a reachable server.
 
 ## Build and test on a Mac
 
-Open `Downtify.xcodeproj` with Xcode 15 or later. Install an iOS simulator runtime in Xcode Settings, choose the shared **Downtify** scheme and an iPhone or iPad simulator, then use **Product → Run** and **Product → Test**. Simulator builds do not need a development team.
+Open `Downtify.xcodeproj` with the installed Xcode version. Install an iOS simulator runtime in Xcode Settings, choose the shared **Downtify** scheme and an iPhone or iPad simulator, then use **Product → Run** and **Product → Test**. Simulator builds do not need a development team.
 
 For command-line validation, use an available simulator UDID from the listing.
 
 ```sh
 xcrun simctl list devices available
-xcodebuild -project Downtify.xcodeproj -scheme Downtify -destination 'platform=iOS Simulator,id=<SIMULATOR_UDID>' clean build test
+xcodebuild -project Downtify.xcodeproj -scheme Downtify -destination 'platform=iOS Simulator,id=<SIMULATOR_UDID>' -derivedDataPath /tmp/DowntifyDerived clean build-for-testing
+xcodebuild -project Downtify.xcodeproj -scheme Downtify -destination 'platform=iOS Simulator,id=<SIMULATOR_UDID>' -derivedDataPath /tmp/DowntifyDerived test-without-building
 ```
 
-The Xcode build, simulator launch and XCTest run are pending macOS validation. This workspace is on Windows.
+## Simulator checklist
+
+Run the test suite above for deterministic playback, persistence, network-contract, and presentation behavior. Then use **Product → Run** to review the complete user flow:
+
+- Connect to a reachable server, sign in, refresh the library, and start a track.
+- Open Now Playing; verify play/pause, seek, previous/next, shuffle, and all three repeat modes.
+- Open Play Queue; verify the current item and upcoming items, select an upcoming item, remove an item (including one duplicate track occurrence), and reorder upcoming entries.
+- Confirm queue edits and the selected occurrence survive relaunch, and confirm lock-screen controls/metadata while audio plays.
+- Try sign out and reconnect, including the permission and error states relevant to the server.
+
+Manual server-backed playback, persistence across an app relaunch, and lock-screen behavior require a reachable server and device/simulator interaction; automated fixture tests alone do not verify these end-to-end steps.
+
+## Server instance
+
+The project server instance is [[private server]]([private server]). Use it for integration validation when the relevant features are ready.
 
 ## Boundaries and platform decisions
 

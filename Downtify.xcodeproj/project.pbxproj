@@ -5,6 +5,122 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000053 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = AppShellView.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000054 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000053;
+		};
+		000000000000000000000055 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = SessionPresentationCoordinator.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000056 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000055;
+		};
+		000000000000000000000057 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = SessionPresentationCoordinatorTests.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000058 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000057;
+		};
+		000000000000000000000059 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryPresentationModel.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000005A = { isa = PBXBuildFile; fileRef = 000000000000000000000059; };
+		00000000000000000000005B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryPresentationModelTests.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000005C = { isa = PBXBuildFile; fileRef = 00000000000000000000005B; };
+		000000000000000000000051 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000045,
+				000000000000000000000047,
+				000000000000000000000049,
+				00000000000000000000004B,
+				00000000000000000000004D,
+			);
+			path = Playback;
+			sourceTree = "<group>";
+		};
+		00000000000000000000004F = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = PlaybackTests.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000050 = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000004F;
+		};
+		00000000000000000000004D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = PlaybackController.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000004E = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000004D;
+		};
+		00000000000000000000004B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = PlaybackSystem.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000004C = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000004B;
+		};
+		000000000000000000000049 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = AVPlaybackEngine.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000004A = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000049;
+		};
+		000000000000000000000047 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = PlaybackQueue.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000048 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000047;
+		};
+		000000000000000000000045 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = PlaybackStream.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000046 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000045;
+		};
 		000000000000000000000001 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -45,6 +161,154 @@
 			isa = PBXBuildFile;
 			fileRef = 000000000000000000000007;
 		};
+		000000000000000000000029 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = APIClient.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000002A = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000029;
+		};
+		00000000000000000000002B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = APIClientContractTests.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000002C = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000002B;
+		};
+		00000000000000000000002D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = ConnectionService.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000002E = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000002D;
+		};
+		00000000000000000000002F = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = BonjourServerDiscovery.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000030 = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000002F;
+		};
+		000000000000000000000031 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = KeychainSessionStore.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000032 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000031;
+		};
+		000000000000000000000033 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = ConnectionServiceTests.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000034 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000033;
+		};
+		000000000000000000000035 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryTrack.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000036 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000035;
+		};
+		000000000000000000000037 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryAPIClient.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000038 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000037;
+		};
+		000000000000000000000039 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryDatabase.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000003A = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000039;
+		};
+		00000000000000000000003B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryRepository.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000003C = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000003B;
+		};
+		00000000000000000000003D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibraryWebSocket.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000003E = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000003D;
+		};
+		00000000000000000000003F = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibrarySyncCoordinator.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000040 = {
+			isa = PBXBuildFile;
+			fileRef = 00000000000000000000003F;
+		};
+		000000000000000000000041 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = LibrarySyncTests.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000042 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000041;
+		};
+		000000000000000000000043 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000035,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		000000000000000000000044 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000039,
+				00000000000000000000003B,
+				00000000000000000000003F,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
 		000000000000000000000009 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -60,6 +324,9 @@
 			children = (
 				000000000000000000000001,
 				000000000000000000000003,
+				000000000000000000000053,
+				000000000000000000000055,
+				000000000000000000000059,
 			);
 			sourceTree = "<group>";
 			path = App;
@@ -75,7 +342,11 @@
 		00000000000000000000000D = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000037,
+				00000000000000000000003D,
 				000000000000000000000007,
+				000000000000000000000029,
+				00000000000000000000002D,
 			);
 			sourceTree = "<group>";
 			path = V1;
@@ -83,6 +354,8 @@
 		00000000000000000000000E = {
 			isa = PBXGroup;
 			children = (
+				00000000000000000000002F,
+				000000000000000000000031,
 				00000000000000000000000D,
 			);
 			sourceTree = "<group>";
@@ -91,6 +364,9 @@
 		00000000000000000000000F = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000043,
+				000000000000000000000044,
+				000000000000000000000051,
 				00000000000000000000000B,
 				00000000000000000000000E,
 				00000000000000000000000C,
@@ -101,7 +377,13 @@
 		000000000000000000000010 = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000057,
+				000000000000000000000041,
+				00000000000000000000004F,
 				000000000000000000000009,
+				00000000000000000000002B,
+				000000000000000000000033,
+				00000000000000000000005B,
 			);
 			sourceTree = "<group>";
 			path = DowntifyTests;
@@ -140,10 +422,28 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000036,
+				000000000000000000000038,
+				00000000000000000000003A,
+				00000000000000000000003C,
+				00000000000000000000003E,
+				000000000000000000000040,
+				00000000000000000000005A,
+				000000000000000000000046,
+				000000000000000000000048,
+				00000000000000000000004A,
+				00000000000000000000004C,
+				00000000000000000000004E,
 				000000000000000000000002,
 				000000000000000000000004,
+				000000000000000000000054,
+				000000000000000000000056,
 				000000000000000000000006,
 				000000000000000000000008,
+				00000000000000000000002A,
+				00000000000000000000002E,
+				000000000000000000000030,
+				000000000000000000000032,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -182,7 +482,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000058,
+				00000000000000000000005C,
+				000000000000000000000042,
+				000000000000000000000050,
 				00000000000000000000000A,
+				00000000000000000000002C,
+				000000000000000000000034,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -269,6 +575,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = Downtify/Info.plist;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios;
 				MARKETING_VERSION = 0.1.0;
@@ -283,6 +590,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = Downtify/Info.plist;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios;
 				MARKETING_VERSION = 0.1.0;
