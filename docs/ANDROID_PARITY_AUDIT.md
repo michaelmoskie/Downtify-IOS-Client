@@ -47,11 +47,25 @@ iOS exposes Settings from the account menu. The screen persists System/Light/Dar
 
 All source keys now have localized values; standard shared words, the Downtify brand, empty/punctuation-only strings, and format-only values remain identical where appropriate. Translation quality has not had native-speaker review, especially for long explanatory and error messages. The repository contains no iOS client `LICENSE` file and no third-party font or asset license notices were found; the client distribution license and any dependency notice obligations remain unresolved. The Android reference app license is GPL-3.0 at the pinned SHA; the current server default-branch license is AGPL-3.0. The server license is not pinned to the Android source revision. Artwork/media rights remain with the server and their respective providers. Android-specific wallpaper colors, custom fonts, and floating navigation are not applicable to this iOS implementation.
 
-The simulator app target builds successfully, all eight strings files and the Xcode project pass `plutil -lint`, and the localization checker passes for all 313 source keys and placeholders. The full simulator suite executed 81 tests; 2 existing Keychain session tests failed with OSStatus `-34018`. UI appearance was not visually reviewed on physical devices; native-speaker translation review and license decisions remain release follow-ups.
+The simulator app target builds successfully, all eight strings files and the Xcode project pass `plutil -lint`, and the localization checker passes for all 313 source keys and placeholders. An earlier simulator run with `CODE_SIGNING_ALLOWED=NO` executed 81 tests and had two Keychain failures (`-34018`); the normal signed simulator run passed all 81 tests. UI appearance was not visually reviewed on physical devices; native-speaker translation review and license decisions remain release follow-ups.
 
 ### Plan deviation: CarPlay
 
 Task 18 (CarPlay) is skipped at the user's direction. No CarPlay integration, entitlement request, receiver test or vehicle test is included; this remains an explicit platform parity gap.
+
+### Release validation and parity reconciliation (Task 19, 2026-11-06)
+
+Reference remains the Android repository at pinned commit `100be83e49c3250424e6326670a73bff69325b73`. The parity rows above reconcile as follows: connection/auth, local Home/library, playback/queue/lyrics, settings/About, podcasts, downloads and trash have iOS implementations documented in the task evidence below; catalog/Discover/Similar and external preview workflows remain contract-limited. Streaming synced library tracks follows the documented mobile route and is implemented. Android Auto has the explicitly skipped CarPlay parity gap. Android-only wallpaper color, custom font and floating navigation controls are platform-specific and not release gaps. The implementation notes in this audit are source/test evidence, not proof of deployed-server or physical-device behavior.
+
+Checks run for this validation:
+
+- `python3 scripts/check_localization_parity.py`: passed, 313 keys across 8 locales.
+- `plutil -lint` on `en`, `bg`, `fr`, `el`, `hu`, `pt-BR`, `es`, `tr` `Localizable.strings`, `Downtify.xcodeproj/project.pbxproj` and `Downtify/Info.plist`: all passed.
+- `xcodebuild -version`: Xcode 27.0 (27A266a).
+- `xcodebuild build` for the iOS Simulator target: succeeded.
+- `xcodebuild test` against the booted iPhone 18 Pro (iOS 27.0) with normal simulator signing: passed, 81/81 tests. An earlier run with `CODE_SIGNING_ALLOWED=NO` produced two Keychain `-34018` failures; those did not reproduce with normal signing.
+
+Release blockers and follow-ups: validate pairing, sync, migrations, offline transfer/playback, background/Lock Screen/remote controls, reconnect/revocation and supported-server behavior against an authorized reachable server; complete physical iPhone permission, Bonjour, camera, VoiceOver, Dynamic Type, localization layout and performance review. A read-only `GET [private server]/api/server/info` check could not resolve the host in this environment; no credentials or mutating requests were sent. Eight locale tables are structurally complete, but native-speaker translation review is pending. VoiceOver labels, Dynamic Type handling and 44-point targets are present in code evidence, but traversal is not device-verified. No iOS client `LICENSE`, `PrivacyInfo.xcprivacy`, or privacy-policy file was found; client distribution licensing, dependency/asset notice obligations and privacy disclosures require project-owner resolution before distribution. CarPlay remains an accepted, explicit parity gap at the user's direction.
 
 ### Connect decision scenarios
 
