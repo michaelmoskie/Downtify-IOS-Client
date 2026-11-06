@@ -5,6 +5,12 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000071 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryHomeView.swift; sourceTree = "<group>"; };
+		000000000000000000000072 = { isa = PBXBuildFile; fileRef = 000000000000000000000071; };
+		00000000000000000000006F = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryCollectionsAPI.swift; sourceTree = "<group>"; };
+		000000000000000000000070 = { isa = PBXBuildFile; fileRef = 00000000000000000000006F; };
+		00000000000000000000006D = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryBrowse.swift; sourceTree = "<group>"; };
+		00000000000000000000006E = { isa = PBXBuildFile; fileRef = 00000000000000000000006D; };
 		00000000000000000000006B = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		00000000000000000000006C = { isa = PBXBuildFile; fileRef = 00000000000000000000006B; };
 		000000000000000000000069 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloadsTests.swift; sourceTree = "<group>"; };
@@ -314,6 +320,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000035,
+				00000000000000000000006D,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -356,6 +363,7 @@
 			children = (
 				000000000000000000000005,
 				00000000000000000000006B,
+				000000000000000000000071,
 			);
 			sourceTree = "<group>";
 			path = Presentation;
@@ -366,6 +374,7 @@
 				000000000000000000000067,
 				000000000000000000000065,
 				000000000000000000000037,
+				00000000000000000000006F,
 				00000000000000000000003D,
 				000000000000000000000007,
 				000000000000000000000029,
@@ -450,7 +459,9 @@
 				000000000000000000000066,
 				000000000000000000000064,
 				000000000000000000000036,
+				00000000000000000000006E,
 				000000000000000000000038,
+				000000000000000000000070,
 				00000000000000000000003A,
 				00000000000000000000003C,
 				00000000000000000000003E,
@@ -470,6 +481,7 @@
 				000000000000000000000056,
 				000000000000000000000006,
 				00000000000000000000006C,
+				000000000000000000000072,
 				000000000000000000000008,
 				00000000000000000000002A,
 				00000000000000000000002E,

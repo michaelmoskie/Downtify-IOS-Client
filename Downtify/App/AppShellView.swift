@@ -28,198 +28,7 @@ struct AppShellView: View {
     }
 }
 
-private struct LibraryHomeView: View {
-    let server: SessionPresentationCoordinator.ServerSummary
-    @ObservedObject var library: LibraryPresentationModel
-    let playback: PlaybackController
-    @Binding var appearance: DowntifyAppearance
-    let signOut: @MainActor () async throws -> Void
-    @Environment(\.downtifyPalette) private var palette
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var searchText = ""
-    @State private var showingSignOutConfirmation = false
-    @State private var signOutError: String?
-
-    private var sortedTracks: [LibraryTrack] {
-        LibraryTrackOrdering.sorted(library.tracks)
-    }
-
-    private var visibleTracks: [LibraryTrack] {
-        LibraryTrackOrdering.matching(sortedTracks, query: searchText)
-    }
-
-    private var isSearching: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var coverTracks: [LibraryTrack] {
-        let limit = horizontalSizeClass == .regular ? 4 : 3
-        var albums = Set<String>()
-        var covers: [LibraryTrack] = []
-        for track in sortedTracks where track.hasCover {
-            let album = track.albumID.isEmpty ? track.album : track.albumID
-            guard albums.insert(album).inserted else { continue }
-            covers.append(track)
-            if covers.count == limit { break }
-        }
-        return covers
-    }
-
-    var body: some View {
-        NavigationStack {
-            trackContent
-                .navigationTitle("Library")
-                .navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            if let username = server.username {
-                                Label("Signed in as \(username)", systemImage: "person.crop.circle")
-                            }
-                            Picker("Appearance", selection: $appearance) {
-                                ForEach(DowntifyAppearance.allCases) { option in
-                                    Text(option.label).tag(option)
-                                }
-                            }
-                            Button("Sign out", role: .destructive) { showingSignOutConfirmation = true }
-                        } label: {
-                            Image(systemName: "person.crop.circle")
-                        }
-                        .accessibilityLabel("Account options")
-                    }
-                }
-                .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
-                    Button("Sign out", role: .destructive) {
-                        Task {
-                            do { try await signOut() } catch { signOutError = "Could not sign out. Please try again." }
-                        }
-                    }
-                } message: {
-                    Text("You can reconnect to this server at any time.")
-                }
-                .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
-                    Button("OK", role: .cancel) { signOutError = nil }
-                } message: { Text(signOutError ?? "") }
-                .searchable(text: $searchText, prompt: "Songs, artists, albums")
-                .background(palette.background.ignoresSafeArea())
-                .toolbarBackground(palette.background, for: .navigationBar)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            PlaybackDock(playback: playback)
-        }
-    }
-
-    private var trackContent: some View {
-        let tracks = visibleTracks
-        return ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
-                if !isSearching {
-                    libraryHeader
-                }
-                if !library.tracks.isEmpty, case .cachedError(let message) = library.state {
-                    Label(message, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                        .font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !library.tracks.isEmpty, case .storageFailure(let message) = library.state {
-                    Label(message, systemImage: "externaldrive.badge.exclamationmark")
-                        .font(.subheadline).foregroundStyle(DowntifyStyle.error).fixedSize(horizontal: false, vertical: true)
-                }
-                if library.state == .refreshing { ProgressView("Refreshing library…").font(.caption) }
-                if library.tracks.isEmpty {
-                    libraryEmptyState
-                } else if tracks.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
-                        .frame(maxWidth: .infinity, minHeight: 220)
-                } else {
-                    LazyVStack(spacing: 0) {
-                        ForEach(tracks) { track in
-                            Button {
-                                guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
-                                playback.replaceQueue(tracks, startingAt: index)
-                            } label: {
-                                TrackRow(track: track)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(Text(track.accessibleMetadata))
-                            .accessibilityValue(spokenDuration(track.duration))
-                            .accessibilityHint("Play this song and replace the current queue")
-                            if track.id != tracks.last?.id { Divider().padding(.leading, 80) }
-                        }
-                    }
-                    .background(palette.surface, in: RoundedRectangle(cornerRadius: 20))
-                }
-            }
-            .padding(.horizontal, DowntifyStyle.Space.regular)
-            .padding(.vertical, DowntifyStyle.Space.small)
-            .frame(maxWidth: 760)
-            .frame(maxWidth: .infinity)
-        }
-        .refreshable { await library.refresh() }
-    }
-
-    private var libraryHeader: some View {
-        DowntifyCard {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
-                let covers = coverTracks
-                if !covers.isEmpty, !dynamicTypeSize.isAccessibilitySize {
-                    HStack(spacing: DowntifyStyle.Space.small) {
-                        ForEach(covers) { track in
-                            TrackArtwork(track: track, size: horizontalSizeClass == .regular ? 90 : 62)
-                        }
-                    }
-                    .accessibilityHidden(true)
-                }
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(server.name)
-                            .font(.title2.weight(.semibold))
-                            .accessibilityAddTraits(.isHeader)
-                        if let username = server.username {
-                            Text("Signed in as \(username)")
-                                .font(.subheadline)
-                                .foregroundStyle(DowntifyStyle.secondaryText)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button { Task { await library.refresh() } } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .downtifyControlTarget()
-                    }
-                    .accessibilityLabel("Refresh library")
-                    .disabled(library.state == .refreshing || library.state == .loading)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var libraryEmptyState: some View {
-        switch library.state {
-        case .loading, .refreshing:
-            ProgressView("Loading your library…")
-                .frame(maxWidth: .infinity, minHeight: 220)
-        case .empty, .ready:
-            DowntifyUnavailableView(title: "Your library is empty", symbol: "music.note.list",
-                                    message: Text("Music saved on this server will appear here."),
-                                    retry: refreshLibrary)
-        case .cachedError(let message):
-            DowntifyUnavailableView(title: "Library unavailable", symbol: "exclamationmark.triangle",
-                                    message: Text(message), retry: refreshLibrary)
-        case .storageFailure(let message):
-            DowntifyUnavailableView(title: "Library unavailable", symbol: "externaldrive.badge.exclamationmark",
-                                    message: Text(message), retry: refreshLibrary)
-        }
-    }
-
-    private func refreshLibrary() {
-        Task { await library.refresh() }
-    }
-}
-
-private extension LibraryTrack {
+extension LibraryTrack {
     var displayTitle: String { title.isEmpty ? String(localized: "Unknown title") : title }
     var displayArtist: String { artist.isEmpty ? String(localized: "Unknown artist") : artist }
     var accessibleMetadata: String {
@@ -228,7 +37,7 @@ private extension LibraryTrack {
     }
 }
 
-private struct TrackRow: View {
+struct TrackRow: View {
     let track: LibraryTrack
 
     var body: some View {
@@ -248,7 +57,7 @@ private struct TrackRow: View {
 }
 
 /// Lives at the navigation boundary so playback updates do not invalidate library rows.
-private struct PlaybackDock: View {
+struct PlaybackDock: View {
     @ObservedObject var playback: PlaybackController
     @Environment(\.downtifyPalette) private var palette
     @State private var showingNowPlaying = false
@@ -653,6 +462,20 @@ final class ArtworkLoader: ObservableObject {
 
     func image(for track: LibraryTrack, size: Int) async -> UIImage? {
         guard track.hasCover, !track.id.isEmpty else { return nil }
+        return await image(key: "track:\(track.id):\(size)") { address in
+            let url = address.url(for: "/api/v1/tracks").appendingPathComponent(track.id).appendingPathComponent("cover")
+            return (url, URLQueryItem(name: "size", value: String(size)))
+        }
+    }
+
+    func playlistImage(file: String) async -> UIImage? {
+        guard !file.isEmpty else { return nil }
+        return await image(key: "playlist:\(file)") { address in
+            (address.url(for: "/playlist-cover"), URLQueryItem(name: "file", value: file))
+        }
+    }
+
+    private func image(key: String, route: (ServerAddress) -> (URL, URLQueryItem)) async -> UIImage? {
         do {
             guard let session = try await connection.restoreSession() else {
                 cache.removeAllObjects()
@@ -663,13 +486,11 @@ final class ArtworkLoader: ObservableObject {
                 cache.removeAllObjects()
                 cachedSession = session
             }
-            let key = "\(track.id):\(size)" as NSString
-            if let image = cache.object(forKey: key) { return image }
+            if let image = cache.object(forKey: key as NSString) { return image }
             let address = try await LibraryAPIClient(transport: transport).verifiedAddress(for: session)
-            let url = address.url(for: "/api/v1/tracks")
-                .appendingPathComponent(track.id).appendingPathComponent("cover")
+            let (url, query) = route(address)
             guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-            components.queryItems = [URLQueryItem(name: "size", value: String(size))]
+            components.queryItems = [query]
             guard let requestURL = components.url else { return nil }
             var request = URLRequest(url: requestURL)
             request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
@@ -678,7 +499,7 @@ final class ArtworkLoader: ObservableObject {
                 .send(request, to: address)
             guard !Task.isCancelled, try await connection.restoreSession() == session,
                   cachedSession == session, let image = UIImage(data: data) else { return nil }
-            cache.setObject(image, forKey: key, cost: data.count)
+            cache.setObject(image, forKey: key as NSString, cost: data.count)
             return image
         } catch {
             return nil
@@ -686,12 +507,19 @@ final class ArtworkLoader: ObservableObject {
     }
 }
 
-private struct TrackArtwork: View {
+struct TrackArtwork: View {
     let track: LibraryTrack?
     let size: CGFloat
+    var playlistCover: String? = nil
     @EnvironmentObject private var artwork: ArtworkLoader
     @State private var image: UIImage?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct ArtworkRequest: Equatable {
+        let track: LibraryTrack?
+        let cover: String?
+        let size: Int
+    }
 
     private var requestSize: Int { size > 150 ? 600 : 150 }
 
@@ -707,10 +535,15 @@ private struct TrackArtwork: View {
                     .transition(.opacity)
             }
         }
-        .task(id: track) {
+        .task(id: ArtworkRequest(track: track, cover: playlistCover, size: requestSize)) {
             image = nil
-            guard let track, track.hasCover else { return }
-            let loadedImage = await artwork.image(for: track, size: requestSize)
+            var loadedImage: UIImage?
+            if let playlistCover, !playlistCover.isEmpty {
+                loadedImage = await artwork.playlistImage(file: playlistCover)
+            }
+            if loadedImage == nil, let track, track.hasCover, !Task.isCancelled {
+                loadedImage = await artwork.image(for: track, size: requestSize)
+            }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : .easeIn(duration: 0.18)) {
                 image = loadedImage
@@ -755,7 +588,7 @@ private func durationText(_ duration: Double) -> String {
     return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
 }
 
-private func spokenDuration(_ duration: Double) -> String {
+func spokenDuration(_ duration: Double) -> String {
     guard duration >= 0, let seconds = Int(exactly: duration.rounded()) else {
         return String(localized: "Duration unavailable")
     }

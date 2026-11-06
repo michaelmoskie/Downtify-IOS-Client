@@ -296,6 +296,8 @@ final class LibrarySyncTests: XCTestCase {
         defer { worker.cancel() }
         await fulfillment(of: [socketReady], timeout: 3)
         XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"library_changed"}"#)), .libraryChanged)
+        XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"playlists_changed"}"#)), .collectionsChanged)
+        XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"likes","count":3}"#)), .collectionsChanged)
         XCTAssertNil(LibraryLiveEvent.decode(.string(#"{"type":"other"}"#)))
         socket.continuation.yield(.libraryChanged)
         await fulfillment(of: [receivedRefresh], timeout: 3)

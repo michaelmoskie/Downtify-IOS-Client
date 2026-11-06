@@ -13,6 +13,7 @@ final class LibrarySyncCoordinator {
     private let wait: @Sendable (Duration) async throws -> Void
     private let didUpdate: @MainActor (DeviceSession) async -> Void
     private let didFail: @MainActor (DeviceSession, String) async -> Void
+    private let didChangeCollections: @MainActor (DeviceSession) async -> Void
     private var isForeground = false
     private var foregroundTask: Task<Void, Never>?
 
@@ -22,6 +23,7 @@ final class LibrarySyncCoordinator {
         verifySession: @escaping @Sendable (DeviceSession) async throws -> DeviceSessionStatus,
         didUpdate: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
         didFail: @escaping @MainActor (DeviceSession, String) async -> Void = { _, _ in },
+        didChangeCollections: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
         wait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.repository = repository
@@ -31,6 +33,7 @@ final class LibrarySyncCoordinator {
         self.didUpdate = didUpdate
         self.didFail = didFail
         self.wait = wait
+        self.didChangeCollections = didChangeCollections
     }
 
     func setActive(_ active: Bool) {
@@ -83,7 +86,8 @@ final class LibrarySyncCoordinator {
                         failures = 0
                     }
                     // A successful reconnect closes the gap in events while the app was offline.
-                    await sync(session)
+                    if event != .collectionsChanged { await sync(session) }
+                    await didChangeCollections(session)
                 }
             } catch is CancellationError {
                 return
@@ -120,11 +124,14 @@ final class LibrarySyncCoordinator {
             status = .idle
         } catch APIError.httpStatus(401, _) {
             status = .failed("The saved session was rejected.")
-            await didFail(session, "The saved session was rejected. Showing saved music.")
+            await didFail(session, "The saved session was rejected.")
             await verifyIfCurrent(session)
+        } catch APIError.transportFailure {
+            status = .failed("Could not reach the server.")
+            await didFail(session, "Could not reach the server.")
         } catch {
-            status = .failed("Library refresh failed. Showing saved music.")
-            await didFail(session, "Library refresh failed. Showing saved music.")
+            status = .failed("Library refresh failed.")
+            await didFail(session, "Library refresh failed.")
         }
     }
 

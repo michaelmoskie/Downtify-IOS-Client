@@ -6,6 +6,7 @@ struct AppContainer {
     let serverDiscovery = BonjourServerDiscovery()
     let library: LibraryRepository
     let librarySync: LibrarySyncCoordinator
+    let collections: LibraryCollectionsModel
     let libraryPresentation: LibraryPresentationModel
     let playback: PlaybackController
     let artwork: ArtworkLoader
@@ -21,11 +22,14 @@ struct AppContainer {
             try await connection.sessionUpdates()
         }
         let api = LibraryAPIClient()
-        let repository = LibraryRepository(database: LibraryDatabase(), feed: api) {
+        let database = LibraryDatabase()
+        let repository = LibraryRepository(database: database, feed: api) {
             try await connection.restoreSession()
         }
         library = repository
         let sessionUpdates: @Sendable () async throws -> AsyncStream<DeviceSession?> = { try await connection.sessionUpdates() }
+        let collections = LibraryCollectionsModel(database: database, sessionUpdates: sessionUpdates)
+        self.collections = collections
         let presentation = LibraryPresentationModel(repository: repository, sessionUpdates: sessionUpdates)
         libraryPresentation = presentation
         librarySync = LibrarySyncCoordinator(
@@ -33,7 +37,8 @@ struct AppContainer {
             sessionUpdates: sessionUpdates,
             verifySession: { try await connection.verifySession(expected: $0) },
             didUpdate: { await presentation.syncDidUpdate(for: $0) },
-            didFail: { presentation.syncDidFail(for: $0, message: $1) }
+            didFail: { presentation.syncDidFail(for: $0, message: $1) },
+            didChangeCollections: { await collections.refresh(for: $0) }
         )
         let playbackCache = PlaybackCache()
         let verifyPlaybackSession: (DeviceSession) async -> Void = {

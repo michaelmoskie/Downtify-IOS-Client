@@ -25,6 +25,28 @@ actor LibraryDatabase {
         self.fileURL = fileURL
     }
 
+    func browseData(_ key: String, in scope: LibraryScope) throws -> Data? {
+        try database().withStatement("""
+            SELECT payload FROM library_browse WHERE server_id = ? AND account = ? AND kind = ?
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(key, at: 3)
+            return try statement.next() ? statement.payload() : nil
+        }
+    }
+
+    func saveBrowseData(_ data: Data, key: String, in scope: LibraryScope) throws {
+        try database().withStatement("""
+            INSERT INTO library_browse (server_id, account, kind, payload) VALUES (?, ?, ?, ?)
+            ON CONFLICT (server_id, account, kind) DO UPDATE SET payload = excluded.payload
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(key, at: 3)
+            try statement.bind(data, at: 4)
+            try statement.execute()
+        }
+    }
+
     func checkpoint(for scope: LibraryScope) throws -> LibraryCheckpoint? {
         try database().checkpoint(for: scope)
     }
@@ -181,7 +203,16 @@ private final class SQLiteConnection {
             PRIMARY KEY (server_id, account)
         ) WITHOUT ROWID;
         """,
-        "ALTER TABLE library_checkpoints ADD COLUMN etag TEXT;"
+        "ALTER TABLE library_checkpoints ADD COLUMN etag TEXT;",
+        """
+        CREATE TABLE library_browse (
+            server_id TEXT NOT NULL,
+            account TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY (server_id, account, kind)
+        ) WITHOUT ROWID;
+        """
     ]
 
     init(url: URL) throws {
@@ -296,9 +327,12 @@ private struct SQLiteStatement {
         sqlite3_column_text(handle, index).map { String(cString: $0) }
     }
 
+    func payload() -> Data? {
+        sqlite3_column_blob(handle, 0).map { Data(bytes: $0, count: Int(sqlite3_column_bytes(handle, 0))) }
+    }
+
     func track() throws -> LibraryTrack {
-        guard let bytes = sqlite3_column_blob(handle, 0) else { throw LibraryDatabaseError.invalidStoredData }
-        let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(handle, 0)))
+        guard let data = payload() else { throw LibraryDatabaseError.invalidStoredData }
         do {
             return try JSONDecoder().decode(LibraryTrack.self, from: data)
         } catch {

@@ -3,6 +3,7 @@ import Foundation
 enum LibraryLiveEvent: Equatable {
     case connected
     case libraryChanged
+    case collectionsChanged
 
     static func decode(_ message: URLSessionWebSocketTask.Message) -> Self? {
         let data: Data
@@ -11,9 +12,12 @@ enum LibraryLiveEvent: Equatable {
         case .string(let text): data = Data(text.utf8)
         @unknown default: return nil
         }
-        guard let event = try? JSONDecoder().decode(WireEvent.self, from: data),
-              event.type == "library_changed" else { return nil }
-        return .libraryChanged
+        guard let event = try? JSONDecoder().decode(WireEvent.self, from: data) else { return nil }
+        switch event.type {
+        case "library_changed": return .libraryChanged
+        case "playlists_changed", "likes": return .collectionsChanged
+        default: return nil
+        }
     }
 
     private struct WireEvent: Decodable { let type: String }
@@ -46,7 +50,7 @@ struct LibraryWebSocket: LibraryEventStreaming {
     }
 
     private static func open(_ request: URLRequest) -> AsyncThrowingStream<LibraryLiveEvent, Error> {
-        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(32)) { continuation in
             let configuration = URLSessionConfiguration.ephemeral
             configuration.httpShouldSetCookies = false
             configuration.httpCookieStorage = nil

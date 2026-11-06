@@ -11,6 +11,8 @@ struct DowntifyApp: App {
             AppShellView(name: container.displayName, presentation: container.sessionPresentation,
                          library: container.libraryPresentation, playback: container.playback)
                 .environmentObject(container.artwork)
+                .environmentObject(container.collections)
+                .task { container.collections.start() }
                 .environmentObject(container.offlineDownloads)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
