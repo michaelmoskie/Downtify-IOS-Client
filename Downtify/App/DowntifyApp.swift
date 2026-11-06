@@ -10,6 +10,8 @@ struct DowntifyApp: App {
             AppShellView(name: container.displayName, presentation: container.sessionPresentation,
                          library: container.libraryPresentation, playback: container.playback)
                 .tint(DowntifyStyle.accent)
+                .preferredColorScheme(.dark)
+                .environmentObject(container.artwork)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             container.librarySync.setActive(phase == .active)

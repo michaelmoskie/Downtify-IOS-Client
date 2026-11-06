@@ -197,12 +197,8 @@ private struct TrackRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(DowntifyStyle.accent.opacity(0.12))
-                Image(systemName: "music.note").font(.title3.weight(.medium)).foregroundStyle(DowntifyStyle.accent)
-            }
-            .frame(width: 48, height: 48)
-            .accessibilityHidden(true)
+            TrackArtwork(track: track, size: 48)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.title.isEmpty ? "Unknown title" : track.title)
                     .font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
@@ -233,7 +229,7 @@ private struct MiniPlayerView: View {
         HStack(spacing: 10) {
             Button(action: open) {
                 HStack(spacing: 10) {
-                    ArtworkPlaceholder(size: 42)
+                    TrackArtwork(track: track, size: 42)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(track?.title.isEmpty == false ? track!.title : "Unknown title")
                             .font(.subheadline.weight(.semibold)).lineLimit(1)
@@ -288,9 +284,9 @@ private struct NowPlayingView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
-                ArtworkPlaceholder(size: artworkSize)
+                TrackArtwork(track: track, size: artworkSize)
                     .padding(.top, 28)
-                    .accessibilityLabel("Album artwork unavailable")
+                    .accessibilityLabel("Album artwork")
                 VStack(spacing: 5) {
                     Text(track?.title.isEmpty == false ? track!.title : "Unknown title")
                         .font(.title2.weight(.bold)).multilineTextAlignment(.center)
@@ -494,9 +490,8 @@ private struct QueueEntryRow: View {
         HStack(spacing: 12) {
             Button { playback.select(entry.id) } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: isCurrent ? "waveform" : "music.note")
-                        .foregroundStyle(isCurrent ? DowntifyStyle.accent : DowntifyStyle.secondaryText)
-                        .frame(width: 24)
+                    TrackArtwork(track: entry.track, size: 40)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(entry.track.title.isEmpty ? "Unknown title" : entry.track.title).lineLimit(1)
                         Text(entry.track.artist.isEmpty ? "Unknown artist" : entry.track.artist)
@@ -518,6 +513,81 @@ private struct QueueEntryRow: View {
             .accessibilityLabel("Remove \(entry.track.title) from queue")
         }
         .padding(.vertical, 3)
+    }
+}
+
+@MainActor
+final class ArtworkLoader: ObservableObject {
+    private let connection: ConnectionService
+    private let transport: any HTTPDataLoading
+    private let cache = NSCache<NSString, UIImage>()
+    private var cachedSession: DeviceSession?
+
+    init(connection: ConnectionService, transport: any HTTPDataLoading = ConnectionHTTPTransport()) {
+        self.connection = connection
+        self.transport = transport
+        cache.countLimit = 200
+        cache.totalCostLimit = 32 * 1024 * 1024
+    }
+
+    func image(for track: LibraryTrack, size: Int) async -> UIImage? {
+        guard track.hasCover, !track.id.isEmpty else { return nil }
+        do {
+            guard let session = try await connection.restoreSession() else {
+                cache.removeAllObjects()
+                cachedSession = nil
+                return nil
+            }
+            if cachedSession != session {
+                cache.removeAllObjects()
+                cachedSession = session
+            }
+            let key = "\(track.id):\(size)" as NSString
+            if let image = cache.object(forKey: key) { return image }
+            let address = try await LibraryAPIClient(transport: transport).verifiedAddress(for: session)
+            let url = address.url(for: "/api/v1/tracks")
+                .appendingPathComponent(track.id).appendingPathComponent("cover")
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            components.queryItems = [URLQueryItem(name: "size", value: String(size))]
+            guard let requestURL = components.url else { return nil }
+            var request = URLRequest(url: requestURL)
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            request.setValue("image/jpeg", forHTTPHeaderField: "Accept")
+            let data = try await APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
+                .send(request, to: address)
+            guard !Task.isCancelled, try await connection.restoreSession() == session,
+                  cachedSession == session, let image = UIImage(data: data) else { return nil }
+            cache.setObject(image, forKey: key, cost: data.count)
+            return image
+        } catch {
+            return nil
+        }
+    }
+}
+
+private struct TrackArtwork: View {
+    let track: LibraryTrack?
+    let size: CGFloat
+    @EnvironmentObject private var artwork: ArtworkLoader
+    @State private var image: UIImage?
+
+    private var requestSize: Int { size > 150 ? 600 : 150 }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
+            } else {
+                ArtworkPlaceholder(size: size)
+            }
+        }
+        .task(id: track) {
+            image = nil
+            guard let track else { return }
+            image = await artwork.image(for: track, size: requestSize)
+        }
     }
 }
 

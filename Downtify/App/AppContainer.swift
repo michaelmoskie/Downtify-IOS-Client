@@ -8,11 +8,13 @@ struct AppContainer {
     let librarySync: LibrarySyncCoordinator
     let libraryPresentation: LibraryPresentationModel
     let playback: PlaybackController
+    let artwork: ArtworkLoader
 
     init(displayName: String = "Downtify") {
         self.displayName = displayName
         let connection = ConnectionService()
         connectionService = connection
+        artwork = ArtworkLoader(connection: connection)
         sessionPresentation = SessionPresentationCoordinator(connectionService: connection, serverDiscovery: serverDiscovery) {
             try await connection.sessionUpdates()
         }

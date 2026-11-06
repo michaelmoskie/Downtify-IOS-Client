@@ -3,6 +3,32 @@ import XCTest
 @testable import Downtify
 
 final class ConnectionServiceTests: XCTestCase {
+    @MainActor
+    func testArtworkChecksServerIdentityBeforeSendingBearerToken() async throws {
+        let store = MemorySessionStore()
+        try store.save(DeviceSession(baseAddress: "https://music.local/app", serverID: "server-id",
+            serverName: "Server", deviceID: "device-id", username: "maria", role: nil,
+            token: "test-token", allowsInsecureHTTP: false))
+        let track = LibraryTrack(id: "track-id", file: "", title: "Song", artist: "Artist", artists: [],
+            album: "Album", albumArtist: "", albumID: "", artistID: "", trackNumber: 0, year: "",
+            duration: 0, codec: "", bitrate: 0, sampleRate: 0, channels: 0, size: 0, added: 0,
+            hasCover: true, isExplicit: false, playlists: [])
+        let transport = ScriptedConnectionTransport([.serverInfo, .init()])
+        let connection = ConnectionService(transport: transport, store: store)
+        let artwork = ArtworkLoader(connection: connection, transport: transport)
+        _ = await artwork.image(for: track, size: 150)
+        XCTAssertEqual(transport.requests.map { $0.url?.path }, ["/app/api/server/info", "/app/api/v1/tracks/track-id/cover"])
+        XCTAssertNil(transport.requests.first?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(transport.requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        XCTAssertEqual(transport.requests.last?.url?.query, "size=150")
+
+        let wrong = ScriptedConnectionTransport([.init(body: #"{"product":"Downtify","server_id":"other","api_version":1}"#)])
+        let guarded = ArtworkLoader(connection: connection, transport: wrong)
+        _ = await guarded.image(for: track, size: 150)
+        XCTAssertEqual(wrong.requests.count, 1)
+        XCTAssertNil(wrong.requests.first?.value(forHTTPHeaderField: "Authorization"))
+    }
+
     func testAuthenticationCooldownCountsDownAndExpires() {
         let now = Date(timeIntervalSince1970: 1_000)
         let cooldown = AuthenticationCooldown(seconds: 2.2, now: now)
