@@ -31,6 +31,16 @@ final class ServerInfoContractTests: XCTestCase {
         XCTAssertTrue(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"podcasts":true}}"#).supportsPodcasts)
     }
 
+    func testLyricsCapabilityAndLRCTimingParsing() throws {
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1"}"#).supportsLyrics)
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"lyrics":false}}"#).supportsLyrics)
+        XCTAssertTrue(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"lyrics":true}}"#).supportsLyrics)
+
+        let lines = LyricLine.parse("[00:01.20]First\n[00:03.005]Second\n[00:03.50]Third\n[00:04.00][00:05.25]Repeated")
+        XCTAssertEqual(lines.map(\.text), ["First", "Second", "Third", "Repeated", "Repeated"])
+        XCTAssertEqual(lines.map(\.time), [1.2, 3.005, 3.5, 4.0, 5.25])
+    }
+
     func testIncompatibleServers() throws {
         let fixtures = [
             #"{"product":"Downtify","api_version":2,"server_id":"server-1"}"#,

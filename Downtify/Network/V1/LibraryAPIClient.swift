@@ -67,6 +67,77 @@ struct LibraryAPIClient: LibraryFeedFetching {
     }
 }
 
+/// Lyrics contract: GET /api/v1/tracks/{id}/lyrics returns optional LRC and plain text.
+struct TrackLyrics: Equatable, Sendable {
+    let synced: String
+    let plain: String
+
+    var lines: [LyricLine] { LyricLine.parse(synced) }
+    var hasContent: Bool { !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
+struct LyricLine: Equatable, Sendable {
+    let time: TimeInterval
+    let text: String
+
+    static func parse(_ lrc: String) -> [LyricLine] {
+        let pattern = #"\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var result: [LyricLine] = []
+        for raw in lrc.components(separatedBy: .newlines) {
+            let range = NSRange(raw.startIndex..., in: raw)
+            let matches = regex.matches(in: raw, range: range)
+            guard let lastMatch = matches.last,
+                  let lastTagRange = Range(lastMatch.range, in: raw) else { continue }
+            let text = String(raw[lastTagRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            for match in matches {
+                guard let minutesRange = Range(match.range(at: 1), in: raw),
+                      let secondsRange = Range(match.range(at: 2), in: raw),
+                      let minutes = Double(raw[minutesRange]), let seconds = Double(raw[secondsRange]) else { continue }
+                var fraction = 0.0
+                if let fractionRange = Range(match.range(at: 3), in: raw) {
+                    let digits = String(raw[fractionRange])
+                    fraction = (Double(digits) ?? 0) / pow(10, Double(digits.count))
+                }
+                result.append(LyricLine(time: minutes * 60 + seconds + fraction,
+                                        text: text))
+            }
+        }
+        return result.sorted { $0.time < $1.time }
+    }
+}
+
+struct TrackLyricsAPI {
+    var transport: any HTTPDataLoading = ConnectionHTTPTransport()
+
+    func fetch(trackID: String, session: DeviceSession) async throws -> TrackLyrics? {
+        let address = try ServerAddress(session.baseAddress)
+        guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else {
+            throw APIError.insecureTransportConsentRequired
+        }
+        let client = APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
+        let info = try await client.serverInfo(at: address)
+        guard info.serverID == session.serverID else { throw ConnectionError.differentServer }
+        guard info.supportsLyrics else { return nil }
+        let base = address.url(for: "/api/v1/tracks")
+        let encodedID = trackID.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))
+        guard let encodedID else { throw APIError.invalidAddress }
+        let url = base.appendingPathComponent(encodedID).appendingPathComponent("lyrics")
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data = try await client.send(request, to: address)
+        do { return try JSONDecoder().decode(LyricsDTO.self, from: data).model }
+        catch { throw APIError.decodingFailure }
+    }
+}
+
+private struct LyricsDTO: Decodable {
+    let synced: String?
+    let plain: String?
+    var model: TrackLyrics { TrackLyrics(synced: synced ?? "", plain: plain ?? "") }
+}
+
 private struct PageDTO: Decodable {
     let cursor: Int64
     let full: Bool

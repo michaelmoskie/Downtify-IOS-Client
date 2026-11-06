@@ -216,6 +216,16 @@ final class PlaybackController: ObservableObject {
         leavePodcast(publish: true)
     }
 
+    func lyrics(for trackID: String) async throws -> TrackLyrics? {
+        guard let session else { return nil }
+        return try await TrackLyricsAPI().fetch(trackID: trackID, session: session)
+    }
+
+    func lyricsOffsetKey(trackID: String) -> String {
+        guard let session else { return "lyrics.offset.\(trackID)" }
+        return "lyrics.offset.\(session.serverID).\(session.username ?? "device").\(trackID)"
+    }
+
     private func leavePodcast(publish: Bool) {
         guard podcast != nil else { return }
         if phase != .ended { checkpointPodcast() }

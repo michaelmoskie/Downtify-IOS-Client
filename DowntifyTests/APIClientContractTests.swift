@@ -75,6 +75,47 @@ final class APIClientContractTests: XCTestCase {
             .send(request, to: address)
         XCTAssertNotNil(loader.lastRequest)
     }
+
+    func testLyricsFetchRequiresCapabilityAndUsesAuthenticatedV1Route() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv","capabilities":{"lyrics":true}}"#
+        let loader = SequenceLoader(bodies: [info, #"{"synced":"[00:01.00]Line","plain":"Line"}"#])
+        let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: "alice", role: nil, token: "secret", allowsInsecureHTTP: false)
+
+        let lyrics = try await TrackLyricsAPI(transport: loader).fetch(trackID: "track-1", session: session)
+
+        XCTAssertEqual(lyrics, TrackLyrics(synced: "[00:01.00]Line", plain: "Line"))
+        XCTAssertEqual(loader.requests.last?.httpMethod, "GET")
+        XCTAssertEqual(loader.requests.last?.url?.path, "/music/api/v1/tracks/track-1/lyrics")
+        XCTAssertEqual(loader.requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
+    }
+
+    func testLyricsFetchSkipsRouteWhenCapabilityIsAbsent() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#
+        let loader = SequenceLoader(bodies: [info])
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: nil, role: nil, token: "secret", allowsInsecureHTTP: false)
+
+        let lyrics = try await TrackLyricsAPI(transport: loader).fetch(trackID: "track-1", session: session)
+
+        XCTAssertNil(lyrics)
+        XCTAssertEqual(loader.requests.count, 1)
+        XCTAssertEqual(loader.requests.first?.url?.path, "/api/server/info")
+    }
+}
+
+private final class SequenceLoader: HTTPDataLoading {
+    private var bodies: [String]
+    private(set) var requests: [URLRequest] = []
+
+    init(bodies: [String]) { self.bodies = bodies }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        guard !bodies.isEmpty else { throw APIError.invalidResponse }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (Data(bodies.removeFirst().utf8), response)
+    }
 }
 
 private final class StubLoader: HTTPDataLoading {

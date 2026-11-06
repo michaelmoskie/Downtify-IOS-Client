@@ -162,6 +162,10 @@ private struct NowPlayingView: View {
     @Environment(\.downtifyPalette) private var palette
     @Environment(\.dismiss) private var dismiss
     @State private var showingQueue = false
+    @State private var lyrics: TrackLyrics?
+    @State private var lyricsLoading = false
+    @State private var lyricsError = false
+    @State private var lyricOffset: Double = 0
 
     private var track: LibraryTrack? { playback.queue.current?.track }
     private var activelyPlaying: Bool { playback.phase == .playing || playback.phase == .buffering || playback.phase == .loading }
@@ -195,6 +199,7 @@ private struct NowPlayingView: View {
                         transportControls
                         if playback.podcast == nil {
                             queueControls
+                            lyricsSection
                         } else {
                             if playback.podcastProgressSaveFailed {
                                 Text("Could not save playback progress to the server.")
@@ -226,6 +231,7 @@ private struct NowPlayingView: View {
             PlaybackQueueSheet(playback: playback)
                 .presentationDragIndicator(.visible)
         }
+        .task(id: track?.id) { await loadLyrics() }
     }
 
     private var trackMetadata: some View {
@@ -356,6 +362,80 @@ private struct NowPlayingView: View {
     private var artworkSize: CGFloat {
         if usesWideLayout { return 200 }
         return dynamicTypeSize.isAccessibilitySize ? 172 : 240
+    }
+
+    private var lyricsSection: some View {
+        VStack(alignment: .leading, spacing: DowntifyStyle.Space.small) {
+            HStack {
+                Label("Lyrics", systemImage: "quote.bubble")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if lyrics?.lines.isEmpty == false {
+                    HStack(spacing: 4) {
+                        Button { setLyricOffset(lyricOffset - 0.5) } label: {
+                            Image(systemName: "minus").downtifyControlTarget()
+                        }.accessibilityLabel("Lyrics earlier by half a second")
+                        Text("\(lyricOffset, format: .number.precision(.fractionLength(1)))s")
+                            .font(.caption.monospacedDigit())
+                            .accessibilityLabel("Lyrics offset \(lyricOffset, format: .number.precision(.fractionLength(1))) seconds")
+                        Button { setLyricOffset(lyricOffset + 0.5) } label: {
+                            Image(systemName: "plus").downtifyControlTarget()
+                        }.accessibilityLabel("Lyrics later by half a second")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            if lyricsLoading {
+                ProgressView("Loading lyrics…")
+            } else if let lyrics, !lyrics.lines.isEmpty {
+                let active = activeLyricIndex(lyrics.lines)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
+                        Text(line.text.isEmpty ? "♪" : line.text)
+                            .font(index == active ? .title3.weight(.bold) : .body)
+                            .foregroundStyle(index == active ? DowntifyStyle.accent : DowntifyStyle.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(index == active ? .isSelected : [])
+                    }
+                }
+                .accessibilityElement(children: .contain)
+            } else if let lyrics, !lyrics.plain.isEmpty {
+                Text(lyrics.plain)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Plain lyrics")
+            } else {
+                Text(lyricsError ? "Lyrics could not be loaded." : "Lyrics are unavailable for this track.")
+                    .font(.subheadline)
+                    .foregroundStyle(DowntifyStyle.secondaryText)
+                if lyricsError {
+                    Button("Retry") { Task { await loadLyrics() } }
+                }
+            }
+        }
+        .padding(DowntifyStyle.Space.regular)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func loadLyrics() async {
+        guard let track else { lyrics = nil; return }
+        lyricsLoading = true
+        lyricsError = false
+        lyricOffset = UserDefaults.standard.double(forKey: playback.lyricsOffsetKey(trackID: track.id))
+        defer { lyricsLoading = false }
+        do { lyrics = try await playback.lyrics(for: track.id) }
+        catch { if !Task.isCancelled { lyricsError = true; lyrics = nil } }
+    }
+
+    private func setLyricOffset(_ value: Double) {
+        lyricOffset = min(10, max(-10, value))
+        if let track { UserDefaults.standard.set(lyricOffset, forKey: playback.lyricsOffsetKey(trackID: track.id)) }
+    }
+
+    private func activeLyricIndex(_ lines: [LyricLine]) -> Int? {
+        lines.lastIndex { $0.time <= playback.position - lyricOffset }
     }
 
     @ViewBuilder
