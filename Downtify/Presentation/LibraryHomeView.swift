@@ -19,8 +19,9 @@ struct LibraryHomeView: View {
     @State private var showingSignOutConfirmation = false
     @State private var signOutError: String?
     @State private var tab = Tab.home
+    @State private var trashTrack: LibraryTrack?
 
-    private enum Tab { case home, library, search, discover, downloads, podcasts }
+    private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -61,6 +62,15 @@ struct LibraryHomeView: View {
             PodcastsView(connection: connection, playback: playback)
                 .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
                 .tabItem { Label("Podcasts", systemImage: "mic") }.tag(Tab.podcasts)
+
+            if server.role?.lowercased() == "admin" {
+                NavigationStack {
+                    AdminTrashView(connection: connection, role: server.role,
+                                   pairingID: "\(server.serverID):\(server.deviceID):\(server.username ?? ""):\(server.role ?? "")")
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .tabItem { Label("Trash", systemImage: "trash") }.tag(Tab.adminTrash)
+            }
         }
         .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -74,6 +84,14 @@ struct LibraryHomeView: View {
         .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
             Button("OK", role: .cancel) { signOutError = nil }
         } message: { Text(signOutError ?? "") }
+        .sheet(item: $trashTrack) { track in
+            NavigationStack {
+                MoveToTrashConfirmationView(track: track, connection: connection) {
+                    trashTrack = nil
+                    await refresh()
+                }
+            }
+        }
     }
 
     private func browsePage<Content: View>(title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
@@ -94,7 +112,8 @@ struct LibraryHomeView: View {
             ToolbarItem(placement: .topBarTrailing) { accountMenu }
         }
         .navigationDestination(for: LibraryContext.self) { context in
-            LibraryContextView(context: context, library: library, playback: playback)
+            LibraryContextView(context: context, library: library, playback: playback,
+                               onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
         }
     }
 
@@ -198,7 +217,8 @@ struct LibraryHomeView: View {
             let tracks = library.songs(sort: sort, descending: descending, query: query)
             if library.tracks.isEmpty { emptyTracks }
             else if tracks.isEmpty { ContentUnavailableView.search(text: searchText) }
-            else { LibraryTrackList(tracks: tracks, context: nil, playback: playback) }
+            else { LibraryTrackList(tracks: tracks, context: nil, playback: playback,
+                                    onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil) }
         case .albums:
             browseGroups(Array(library.catalog.albumsByID.values), emptyTitle: "No albums")
         case .artists:
@@ -224,7 +244,8 @@ struct LibraryHomeView: View {
             } else {
                 if !matchingTracks.isEmpty {
                     Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryTrackList(tracks: matchingTracks, context: nil, playback: playback)
+                    LibraryTrackList(tracks: matchingTracks, context: nil, playback: playback,
+                                     onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
                 }
                 if !albums.isEmpty {
                     Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
@@ -441,6 +462,7 @@ private struct LibraryContextView: View {
     let context: LibraryContext
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
+    var onMoveToTrash: ((LibraryTrack) -> Void)? = nil
     @EnvironmentObject private var collections: LibraryCollectionsModel
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
@@ -492,7 +514,8 @@ private struct LibraryContextView: View {
                 }
                 if !tracks.isEmpty {
                     Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryTrackList(tracks: tracks, context: context, playback: playback)
+                    LibraryTrackList(tracks: tracks, context: context, playback: playback,
+                                     onMoveToTrash: onMoveToTrash)
                 } else if let error = collections.actionError {
                     Text(error).foregroundStyle(.secondary)
                     Button("Dismiss") { collections.clearError() }
@@ -595,6 +618,7 @@ private struct LibraryTrackList: View {
     let tracks: [LibraryTrack]
     let context: LibraryContext?
     let playback: PlaybackController
+    var onMoveToTrash: ((LibraryTrack) -> Void)? = nil
     @EnvironmentObject private var collections: LibraryCollectionsModel
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
@@ -631,6 +655,9 @@ private struct LibraryTrackList: View {
                             .disabled(collections.mutationBusy)
                         }
                         Button("Add to queue", systemImage: "text.append") { playback.append([track]) }
+                        if let onMoveToTrash {
+                            Button("Move to trash", systemImage: "trash", role: .destructive) { onMoveToTrash(track) }
+                        }
                         downloadAction(track, record: downloadByID[track.id])
                     } label: {
                         HStack(spacing: 0) {

@@ -88,10 +88,15 @@ struct APIClient {
         try await load(request, address: address, isPublicServerInfo: false)
     }
 
+    func sendWithErrorBody(_ request: URLRequest, to address: ServerAddress) async throws -> (Data, HTTPURLResponse) {
+        try await load(request, address: address, isPublicServerInfo: false, allowsHTTPErrorResponses: true)
+    }
+
     private func load(
         _ request: URLRequest,
         address: ServerAddress,
-        isPublicServerInfo: Bool
+        isPublicServerInfo: Bool,
+        allowsHTTPErrorResponses: Bool = false
     ) async throws -> (Data, HTTPURLResponse) {
         if address.usesInsecureHTTP && !isPublicServerInfo && !allowsInsecureRequests {
             throw APIError.insecureTransportConsentRequired
@@ -99,7 +104,7 @@ struct APIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            guard (200..<300).contains(http.statusCode) else {
+            guard allowsHTTPErrorResponses || (200..<300).contains(http.statusCode) else {
                 let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
                 throw APIError.httpStatus(http.statusCode, retryAfter: retryAfter)
             }

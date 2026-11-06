@@ -7,15 +7,24 @@ final class SessionPresentationCoordinator: ObservableObject {
     struct ServerSummary: Equatable {
         let name: String
         let username: String?
+        let role: String?
+        let serverID: String
+        let deviceID: String
 
         init(session: DeviceSession) {
             name = session.serverName
             username = session.username
+            role = session.role
+            serverID = session.serverID
+            deviceID = session.deviceID
         }
 
-        init(name: String, username: String?) {
+        init(name: String, username: String?, role: String? = nil, serverID: String = "", deviceID: String = "") {
             self.name = name
             self.username = username
+            self.role = role
+            self.serverID = serverID
+            self.deviceID = deviceID
         }
     }
 

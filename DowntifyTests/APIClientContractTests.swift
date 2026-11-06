@@ -102,18 +102,93 @@ final class APIClientContractTests: XCTestCase {
         XCTAssertEqual(loader.requests.count, 1)
         XCTAssertEqual(loader.requests.first?.url?.path, "/api/server/info")
     }
+
+    func testTrashCapabilityAndPreviewUseAuthenticatedAdminContractRoutes() async throws {
+        let loader = SequenceLoader(bodies: [
+            #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#,
+            #"{"enabled":true,"can_manage":true,"retention_days":30}"#,
+            #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#,
+            #"{"request_id":"req-1","state":"preparing"}"#,
+            #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#,
+            #"{"state":"ready","preview":{"confirmation":"confirm-1","items":[{"id":"op-1","file":"Artist/01.flac","track_id":"track-1","metadata":{"title":"Song","artist":"Artist","codec":"flac"},"state":"pending","size":100,"expires_at":null}]}}"#
+        ])
+        let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: "alice", role: "admin", token: "secret", allowsInsecureHTTP: false)
+        let api = TrashAPI(transport: loader)
+        let capability = try await api.capabilities(session: session)
+        XCTAssertTrue(capability.available)
+        let (_, preview) = try await api.preview(trackIDs: ["track-1"], session: session)
+        XCTAssertEqual(preview.confirmation, "confirm-1")
+        XCTAssertEqual(loader.requests.map { $0.url?.path }, [
+            "/music/api/server/info",
+            "/music/api/v1/library/trash/capabilities",
+            "/music/api/server/info",
+            "/music/api/v1/library/trash/preview",
+            "/music/api/server/info",
+            "/music/api/v1/library/trash/preview/req-1"
+        ])
+        XCTAssertEqual(loader.requests[3].httpMethod, "POST")
+        XCTAssertEqual(String(data: loader.requests[3].httpBody!, encoding: .utf8), #"{"track_ids":["track-1"]}"#)
+        XCTAssertTrue(loader.requests.filter { $0.url?.path != "/music/api/server/info" }
+            .allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer secret" })
+    }
+
+    func testTrashRejectsMismatchedServerBeforeSendingToken() async throws {
+        let loader = SequenceLoader(bodies: [#"{"product":"Downtify","api_version":1,"server_id":"other"}"#])
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: "alice", role: "admin", token: "secret", allowsInsecureHTTP: false)
+        do {
+            _ = try await TrashAPI(transport: loader).capabilities(session: session)
+            XCTFail("Expected identity mismatch")
+        } catch let error as ConnectionError {
+            XCTAssertEqual(error, .differentServer)
+        }
+        XCTAssertEqual(loader.requests.count, 1)
+        XCTAssertNil(loader.requests.first?.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testTrashDoesNotSendMutationForNonAdminSession() async throws {
+        let loader = SequenceLoader(bodies: [])
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: "alice", role: "user", token: "secret", allowsInsecureHTTP: false)
+        do {
+            try await TrashAPI(transport: loader).restore(ids: ["item"], session: session)
+            XCTFail("Expected admin role gate")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .httpStatus(403, retryAfter: nil))
+        }
+        XCTAssertTrue(loader.requests.isEmpty)
+    }
+
+    func testTrashPreservesServerErrorCodeForActionableConflict() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#
+        let loader = SequenceLoader(bodies: [info, #"{"detail":{"code":"track_is_playing"}}"#], statuses: [200, 409])
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: "alice", role: "admin", token: "secret", allowsInsecureHTTP: false)
+        do {
+            try await TrashAPI(transport: loader).restore(ids: ["item"], session: session)
+            XCTFail("Expected server conflict")
+        } catch let error as TrashAPIError {
+            XCTAssertEqual(error, .httpStatus(409, code: "track_is_playing"))
+        }
+    }
 }
 
 private final class SequenceLoader: HTTPDataLoading {
     private var bodies: [String]
+    private var statuses: [Int]
     private(set) var requests: [URLRequest] = []
 
-    init(bodies: [String]) { self.bodies = bodies }
+    init(bodies: [String], statuses: [Int]? = nil) {
+        self.bodies = bodies
+        self.statuses = statuses ?? Array(repeating: 200, count: bodies.count)
+    }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
         guard !bodies.isEmpty else { throw APIError.invalidResponse }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let status = statuses.removeFirst()
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(bodies.removeFirst().utf8), response)
     }
 }

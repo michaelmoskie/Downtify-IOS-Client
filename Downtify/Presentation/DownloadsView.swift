@@ -244,3 +244,377 @@ struct DownloadsView: View {
         return restored
     }
 }
+
+private enum TrashTab: String, CaseIterable, Identifiable {
+    case trash = "Trash"
+    case exclusions = "Expired"
+    var id: Self { self }
+}
+
+/// Admin-only trash recovery surface. The server capability is checked on each pairing; the role
+/// gate here is an additional client guard, while the server authorizes every request again.
+struct AdminTrashView: View {
+    let connection: ConnectionService
+    let role: String?
+    let pairingID: String
+    @Environment(\.downtifyPalette) private var palette
+    @State private var capability: TrashCapabilityDTO?
+    @State private var items: [TrashItemDTO] = []
+    @State private var totalItems = 0
+    @State private var exclusions: [TrashItemDTO] = []
+    @State private var tab: TrashTab = .trash
+    @State private var search = ""
+    @State private var loading = true
+    @State private var loadingMore = false
+    @State private var busyID: String?
+    @State private var alert: TrashAlert?
+    @State private var showingAllowConfirmation: TrashItemDTO?
+
+    private var isAdmin: Bool { role?.lowercased() == "admin" }
+    private var canManage: Bool { isAdmin && capability?.available == true }
+    private var visibleItems: [TrashItemDTO] {
+        (tab == .trash ? items : exclusions).filter { item in
+            search.isEmpty || [item.metadata.title, item.metadata.artist, item.file].compactMap { $0 }
+                .joined(separator: " ").localizedCaseInsensitiveContains(search)
+        }
+    }
+
+    var body: some View {
+        Group {
+            if !isAdmin {
+                ContentUnavailableView("Administrator access required", systemImage: "lock", description: Text("Music trash is available only to administrator accounts."))
+            } else if loading && capability == nil {
+                ProgressView("Checking music trash access…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityLabel("Checking music trash access")
+            } else if !canManage {
+                ContentUnavailableView("Music trash unavailable", systemImage: "trash.slash", description: Text("This server has not enabled music trash, or this pairing cannot manage it."))
+            } else {
+                List {
+                    Picker("Trash category", selection: $tab) {
+                        ForEach(TrashTab.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Trash category")
+                    TextField("Search music trash", text: $search)
+                        .accessibilityLabel("Search music trash")
+                    Section {
+                        if loading && visibleItems.isEmpty {
+                            ProgressView("Loading music trash…").frame(maxWidth: .infinity)
+                        } else if let alert, visibleItems.isEmpty {
+                            ContentUnavailableView("Could not load music trash", systemImage: "exclamationmark.triangle", description: Text(alert.message))
+                            Button("Try again") { Task { await reload() } }
+                        } else if visibleItems.isEmpty {
+                            ContentUnavailableView(tab == .trash ? "Trash is empty" : "No expired songs", systemImage: tab == .trash ? "trash" : "checkmark.circle", description: Text(tab == .trash ? "Songs moved to trash will appear here." : "Expired songs that automatic downloads still skip appear here."))
+                        } else {
+                            ForEach(visibleItems) { item in itemRow(item) }
+                        }
+                    } header: {
+                        Text(tab == .trash ? "In trash · \(totalItems)" : "Expired · \(exclusions.count)")
+                    } footer: {
+                        if let days = capability?.retentionDays, tab == .trash {
+                            Text("Songs are retained for up to \(days) days. The server performs file moves in the background.")
+                        }
+                    }
+                    if tab == .trash, items.count < totalItems {
+                        Button { Task { await loadMore() } } label: {
+                            HStack {
+                                Spacer()
+                                if loadingMore { ProgressView().accessibilityLabel("Loading more trash items") }
+                                else { Text("Load more") }
+                                Spacer()
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .disabled(loadingMore)
+                    }
+                }
+                .refreshable { await reload() }
+                .overlay(alignment: .top) {
+                    if let alert, !visibleItems.isEmpty {
+                        Label(alert.message, systemImage: "exclamationmark.triangle")
+                            .font(.footnote).padding().background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Music Trash")
+        .background(palette.background)
+        .task(id: "\(pairingID):\(search)") {
+            if !search.isEmpty {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+            }
+            await reload()
+        }
+        .confirmationDialog("Allow downloads again?", isPresented: Binding(get: { showingAllowConfirmation != nil }, set: { if !$0 { showingAllowConfirmation = nil } }), titleVisibility: .visible) {
+            Button("Allow downloads", role: .destructive) {
+                if let item = showingAllowConfirmation { Task { await mutate(item, action: .allowDownload) } }
+                showingAllowConfirmation = nil
+            }
+            Button("Cancel", role: .cancel) { showingAllowConfirmation = nil }
+        } message: {
+            Text("Automatic downloads will be allowed to retrieve this song again.")
+        }
+        .alert(item: $alert) { value in
+            Alert(title: Text(value.title), message: Text(value.message), dismissButton: .default(Text("OK")))
+        }
+    }
+
+    @ViewBuilder private func itemRow(_ item: TrashItemDTO) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.metadata.title?.isEmpty == false ? item.metadata.title! : URL(fileURLWithPath: item.file).lastPathComponent)
+                .font(.headline)
+            HStack {
+                Text([item.metadata.artist, item.metadata.codec?.uppercased(), item.state.replacingOccurrences(of: "_", with: " ")]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                Spacer()
+                if let expiry = item.expiresAt, tab == .trash {
+                    Text(Date(timeIntervalSince1970: expiry), style: .date).font(.caption)
+                }
+            }.font(.caption).foregroundStyle(.secondary)
+            if let error = item.error, !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack {
+                if tab == .trash {
+                    Button("Restore") { Task { await mutate(item, action: .restore) } }
+                        .disabled(busyID != nil)
+                    if item.state == "error" {
+                        Button("Try again") { Task { await mutate(item, action: .retry) } }
+                            .disabled(busyID != nil)
+                    }
+                } else {
+                    Button("Allow downloads") { showingAllowConfirmation = item }
+                        .disabled(busyID != nil)
+                }
+                if busyID == item.id { ProgressView().accessibilityLabel("Working on \(item.metadata.title ?? "song")") }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    private enum Mutation { case restore, retry, allowDownload }
+    private func reload() async {
+        guard isAdmin else { capability = nil; items = []; exclusions = []; loading = false; return }
+        let requestedSearch = search
+        loading = true
+        alert = nil
+        do {
+            guard let session = try await connection.restoreSession(), session.role?.lowercased() == "admin" else {
+                capability = nil; items = []; exclusions = []; loading = false; return
+            }
+            let api = TrashAPI()
+            let found = try await api.capabilities(session: session)
+            try Task.checkCancellation()
+            guard try await connection.restoreSession() == session else {
+                capability = nil; items = []; totalItems = 0; exclusions = []; loading = false; return
+            }
+            capability = found
+            guard found.available else { items = []; totalItems = 0; exclusions = []; loading = false; return }
+            async let page = api.listing(search: requestedSearch, session: session)
+            async let skipped = api.exclusions(session: session)
+            let (loadedPage, loadedExclusions) = try await (page, skipped)
+            try Task.checkCancellation()
+            guard search == requestedSearch else { return }
+            guard try await connection.restoreSession() == session else {
+                capability = nil; items = []; totalItems = 0; exclusions = []; loading = false; return
+            }
+            items = loadedPage.items
+            totalItems = loadedPage.total
+            exclusions = loadedExclusions
+        } catch {
+            if error is CancellationError { return }
+            if shouldDisableTrash(for: error) { capability = nil; items = []; totalItems = 0; exclusions = [] }
+            alert = TrashAlert(title: "Music trash could not be refreshed", message: message(for: error))
+        }
+        loading = false
+    }
+    private func loadMore() async {
+        guard canManage, !loadingMore, let session = try? await connection.restoreSession(),
+              session.role?.lowercased() == "admin" else { return }
+        let requestedSearch = search
+        loadingMore = true
+        defer { loadingMore = false }
+        do {
+            let page = try await TrashAPI().listing(offset: items.count, search: requestedSearch, session: session)
+            try Task.checkCancellation()
+            guard search == requestedSearch, try await connection.restoreSession() == session else { return }
+            let knownIDs = Set(items.map(\.id))
+            items.append(contentsOf: page.items.filter { !knownIDs.contains($0.id) })
+            totalItems = page.total
+        } catch {
+            if error is CancellationError { return }
+            if shouldDisableTrash(for: error) { capability = nil; items = []; totalItems = 0; exclusions = [] }
+            alert = TrashAlert(title: "More trash items could not be loaded", message: message(for: error))
+        }
+    }
+    private func mutate(_ item: TrashItemDTO, action: Mutation) async {
+        guard canManage, let session = try? await connection.restoreSession(),
+              session.role?.lowercased() == "admin" else { capability = nil; return }
+        busyID = item.id
+        do {
+            let api = TrashAPI()
+            switch action {
+            case .restore: try await api.restore(ids: [item.id], session: session)
+            case .retry: try await api.retry(ids: [item.id], session: session)
+            case .allowDownload: try await api.allowDownload(ids: [item.id], session: session)
+            }
+            guard try await connection.restoreSession() == session else { busyID = nil; capability = nil; return }
+            alert = TrashAlert(title: "Request submitted", message: "The server accepted the request. Refresh to check its latest status.")
+            await reload()
+        } catch {
+            if shouldDisableTrash(for: error) { capability = nil; items = []; totalItems = 0; exclusions = [] }
+            alert = TrashAlert(title: "Request could not be completed", message: message(for: error))
+        }
+        busyID = nil
+    }
+    private func shouldDisableTrash(for error: Error) -> Bool {
+        if case TrashAPIError.httpStatus(403, _) = error { return true }
+        if case TrashAPIError.httpStatus(404, _) = error { return true }
+        if case TrashAPIError.httpStatus(503, _) = error { return true }
+        if case APIError.httpStatus(403, _) = error { return true }
+        if case APIError.httpStatus(404, _) = error { return true }
+        if case APIError.httpStatus(503, _) = error { return true }
+        if case ConnectionError.differentServer = error { return true }
+        return false
+    }
+    private func message(for error: Error) -> String {
+        if case let TrashAPIError.httpStatus(status, code) = error {
+            if status == 403 { return "Administrator access changed. Music trash is now hidden." }
+            if status == 404 { return "This server does not support music trash." }
+            if status == 503 { return "Music trash is disabled on this server." }
+            if status == 409 { return "The server could not complete this request (\(code ?? "conflict")). Nothing was changed." }
+        }
+        if case APIError.httpStatus(403, _) = error { return "Administrator access changed. Music trash is now hidden." }
+        if case APIError.httpStatus(404, _) = error { return "This server does not support music trash." }
+        if case APIError.httpStatus(503, _) = error { return "Music trash is disabled on this server." }
+        if case ConnectionError.differentServer = error { return "The saved address now points to a different server. Reconnect before managing trash." }
+        if case APIError.insecureTransportConsentRequired = error { return "Reconnect and acknowledge the server's insecure HTTP connection before using administrator actions." }
+        return "Check your connection and try again. The server may have kept the song unchanged."
+    }
+}
+
+private struct TrashAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
+struct MoveToTrashConfirmationView: View {
+    let track: LibraryTrack
+    let connection: ConnectionService
+    let onSubmitted: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var preview: TrashPreviewDTO?
+    @State private var loading = true
+    @State private var submitting = false
+    @State private var errorMessage: String?
+    @State private var submittedCount: Int?
+
+    var body: some View {
+        List {
+            if loading {
+                ProgressView("Checking files on the server…").accessibilityLabel("Checking which files will move to trash")
+            } else if let errorMessage {
+                ContentUnavailableView("Could not prepare trash request", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
+                Button("Try again") { Task { await preparePreview() } }
+            } else if let preview {
+                Section("Files the server will move") {
+                    ForEach(preview.items) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.metadata.title ?? track.displayTitle).font(.headline)
+                            Text([item.metadata.artist, item.metadata.codec?.uppercased()].compactMap { $0 }.joined(separator: " · "))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Text(item.file).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    if preview.items.isEmpty {
+                        Text("The server found no files to move.").foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    Text("After confirmation, the server starts the move in the background. Songs leave your library after the next successful sync and can be restored before retention expires.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if let submittedCount {
+                Section {
+                    Label("\(submittedCount) song request(s) accepted", systemImage: "checkmark.circle")
+                    Text("The files may still be moving. The library updates after sync.").font(.footnote).foregroundStyle(.secondary)
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .navigationTitle("Move to Trash")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(submitting) }
+            if let preview, submittedCount == nil {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Move to Trash", role: .destructive) { Task { await confirm(preview) } }
+                        .disabled(loading || submitting || preview.items.isEmpty)
+                }
+            }
+        }
+        .task(id: track.id) { await preparePreview() }
+        .alert("Trash request failed", isPresented: Binding(get: { errorMessage != nil && !loading }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: { Text(errorMessage ?? "") }
+    }
+
+    @MainActor private func preparePreview() async {
+        loading = true
+        preview = nil
+        errorMessage = nil
+        do {
+            guard let session = try await connection.restoreSession(), session.role?.lowercased() == "admin" else {
+                throw APIError.httpStatus(403, retryAfter: nil)
+            }
+            let api = TrashAPI()
+            let capability = try await api.capabilities(session: session)
+            guard capability.available else { throw APIError.httpStatus(503, retryAfter: nil) }
+            let (_, result) = try await api.preview(trackIDs: [track.id], session: session)
+            guard try await connection.restoreSession() == session else { throw CancellationError() }
+            preview = result
+            if result.items.isEmpty { errorMessage = "The server found no matching files. Nothing was changed." }
+        } catch {
+            errorMessage = failureMessage(error)
+        }
+        loading = false
+    }
+
+    @MainActor private func confirm(_ preview: TrashPreviewDTO) async {
+        submitting = true
+        do {
+            guard let session = try await connection.restoreSession(), session.role?.lowercased() == "admin" else {
+                throw APIError.httpStatus(403, retryAfter: nil)
+            }
+            let ids = try await TrashAPI().confirm(preview.confirmation, session: session)
+            guard try await connection.restoreSession() == session else { throw CancellationError() }
+            submittedCount = ids.count
+            await onSubmitted()
+        } catch {
+            errorMessage = failureMessage(error)
+        }
+        submitting = false
+    }
+
+    private func failureMessage(_ error: Error) -> String {
+        if case let TrashAPIError.httpStatus(status, code) = error {
+            if status == 403 { return "Administrator access is no longer available. Nothing was moved." }
+            if status == 404 { return "This server does not support music trash. Nothing was moved." }
+            if status == 503 { return "Music trash is disabled or unavailable. Nothing was moved." }
+            if status == 409 { return "The server could not confirm this request (\(code ?? "conflict")). Nothing was moved." }
+        }
+        if case APIError.httpStatus(403, _) = error { return "Administrator access is no longer available. Nothing was moved." }
+        if case APIError.httpStatus(404, _) = error { return "This server does not support music trash. Nothing was moved." }
+        if case APIError.httpStatus(503, _) = error { return "Music trash is disabled or unavailable. Nothing was moved." }
+        if case APIError.insecureTransportConsentRequired = error { return "Reconnect and acknowledge insecure HTTP before sending administrator requests." }
+        if case ConnectionError.differentServer = error { return "The saved address now points to another server. Nothing was moved." }
+        if case APIError.httpStatus(409, _) = error { return "The server could not confirm this request. Refresh the library and try again; nothing was moved." }
+        return "The request could not be completed. Check the connection and try again."
+    }
+}

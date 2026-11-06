@@ -12,9 +12,10 @@ final class SessionPresentationCoordinatorTests: XCTestCase {
         }
 
         coordinator.start()
-        await waitUntil { coordinator.destination == .library(.init(name: "Home", username: "listener")) }
+        let expected = SessionPresentationCoordinator.ServerSummary(session: session)
+        await waitUntil { coordinator.destination == .library(expected) }
 
-        XCTAssertEqual(coordinator.destination, .library(.init(name: "Home", username: "listener")))
+        XCTAssertEqual(coordinator.destination, .library(expected))
         if case let .library(summary) = coordinator.destination {
             XCTAssertFalse(String(describing: summary).contains(session.token))
         } else {
