@@ -18,7 +18,7 @@ struct LibraryHomeView: View {
     @State private var signOutError: String?
     @State private var tab = Tab.home
 
-    private enum Tab { case home, library }
+    private enum Tab { case home, library, search, discover }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -38,6 +38,19 @@ struct LibraryHomeView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Library", systemImage: "books.vertical") }.tag(Tab.library)
+
+            NavigationStack {
+                browsePage(title: "Search") { searchContent }
+                    .searchable(text: $searchText, prompt: "Search your library")
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(Tab.search)
+
+            NavigationStack {
+                browsePage(title: "Discover") { discoveryContent }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
         }
         .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -183,6 +196,53 @@ struct LibraryHomeView: View {
         case .playlists:
             playlistContent
         }
+    }
+
+    @ViewBuilder
+    private var searchContent: some View {
+        if query.isEmpty {
+            DowntifyUnavailableView(title: "Search your library", symbol: "magnifyingglass",
+                                    message: Text("Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract."))
+        } else if library.tracks.isEmpty {
+            emptyTracks
+        } else {
+            let matchingTracks = LibraryTrackOrdering.matching(library.tracks, query: query)
+            let albums = matching(Array(library.catalog.albumsByID.values))
+            let artists = matching(Array(library.catalog.artistsByID.values))
+            if matchingTracks.isEmpty && albums.isEmpty && artists.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                if !matchingTracks.isEmpty {
+                    Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    LibraryTrackList(tracks: matchingTracks, context: nil, playback: playback)
+                }
+                if !albums.isEmpty {
+                    Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    LibraryEntryList(entries: sort.ordered(albums, descending: descending), grid: false)
+                }
+                if !artists.isEmpty {
+                    Text("Artists").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    LibraryEntryList(entries: sort.ordered(artists, descending: descending), grid: false)
+                }
+            }
+        }
+    }
+
+    private var discoveryContent: some View {
+        VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            Label("Catalog discovery is unavailable", systemImage: "sparkles")
+                .font(.title3.bold())
+            Text("The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search.")
+                .foregroundStyle(.secondary)
+            Divider()
+            Label("Similar tracks are unavailable", systemImage: "waveform.path")
+                .font(.headline)
+            Text("Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract.")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var sortMenu: some View {
