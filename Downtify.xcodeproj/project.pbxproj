@@ -1,0 +1,365 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		000000000000000000000001 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = DowntifyApp.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000002 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000001;
+		};
+		000000000000000000000003 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = AppContainer.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000004 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000003;
+		};
+		000000000000000000000005 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = FoundationView.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000006 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000005;
+		};
+		000000000000000000000007 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = ServerInfoDTO.swift;
+			sourceTree = "<group>";
+		};
+		000000000000000000000008 = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000007;
+		};
+		000000000000000000000009 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = ServerInfoContractTests.swift;
+			sourceTree = "<group>";
+		};
+		00000000000000000000000A = {
+			isa = PBXBuildFile;
+			fileRef = 000000000000000000000009;
+		};
+		00000000000000000000000B = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000001,
+				000000000000000000000003,
+			);
+			sourceTree = "<group>";
+			path = App;
+		};
+		00000000000000000000000C = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000005,
+			);
+			sourceTree = "<group>";
+			path = Presentation;
+		};
+		00000000000000000000000D = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000007,
+			);
+			sourceTree = "<group>";
+			path = V1;
+		};
+		00000000000000000000000E = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000000D,
+			);
+			sourceTree = "<group>";
+			path = Network;
+		};
+		00000000000000000000000F = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000000B,
+				00000000000000000000000E,
+				00000000000000000000000C,
+			);
+			sourceTree = "<group>";
+			path = Downtify;
+		};
+		000000000000000000000010 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000009,
+			);
+			sourceTree = "<group>";
+			path = DowntifyTests;
+		};
+		000000000000000000000011 = {
+			isa = PBXFileReference;
+			lastKnownFileType = wrapper.application;
+			path = Downtify.app;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		000000000000000000000012 = {
+			isa = PBXFileReference;
+			lastKnownFileType = wrapper.cfbundle;
+			path = DowntifyTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		000000000000000000000013 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000011,
+				000000000000000000000012,
+			);
+			sourceTree = "<group>";
+			name = Products;
+		};
+		000000000000000000000014 = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000000F,
+				000000000000000000000010,
+				000000000000000000000013,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000015 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000002,
+				000000000000000000000004,
+				000000000000000000000006,
+				000000000000000000000008,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000016 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000017 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000019 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000018;
+			buildPhases = (
+				000000000000000000000015,
+				000000000000000000000016,
+				000000000000000000000017,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Downtify;
+			productName = Downtify;
+			productReference = 000000000000000000000011;
+			productType = "com.apple.product-type.application";
+		};
+		00000000000000000000001A = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00000000000000000000000A,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000001B = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000001C = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000001F = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 00000000000000000000001D;
+			buildPhases = (
+				00000000000000000000001A,
+				00000000000000000000001B,
+				00000000000000000000001C,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				00000000000000000000001E,
+			);
+			name = DowntifyTests;
+			productName = DowntifyTests;
+			productReference = 000000000000000000000012;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		000000000000000000000021 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000020;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000019;
+			remoteInfo = Downtify;
+		};
+		00000000000000000000001E = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000019;
+			targetProxy = 000000000000000000000021;
+		};
+		000000000000000000000022 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				ENABLE_TESTABILITY = YES;
+			};
+			name = Debug;
+		};
+		000000000000000000000023 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				ENABLE_TESTABILITY = NO;
+			};
+			name = Release;
+		};
+		000000000000000000000024 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000022,
+				000000000000000000000023,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000025 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios;
+				MARKETING_VERSION = 0.1.0;
+				CURRENT_PROJECT_VERSION = 1;
+				CODE_SIGN_STYLE = Automatic;
+			};
+			name = Debug;
+		};
+		000000000000000000000026 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios;
+				MARKETING_VERSION = 0.1.0;
+				CURRENT_PROJECT_VERSION = 1;
+				CODE_SIGN_STYLE = Automatic;
+			};
+			name = Release;
+		};
+		000000000000000000000018 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000025,
+				000000000000000000000026,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000027 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios.tests;
+				CODE_SIGN_STYLE = Automatic;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Downtify.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Downtify";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+			name = Debug;
+		};
+		000000000000000000000028 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.downtify.ios.tests;
+				CODE_SIGN_STYLE = Automatic;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Downtify.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Downtify";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+			name = Release;
+		};
+		00000000000000000000001D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000027,
+				000000000000000000000028,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000020 = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					00000000000000000000001F = {
+						TestTargetID = 000000000000000000000019;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000024;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 000000000000000000000014;
+			productRefGroup = 000000000000000000000013;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000019,
+				00000000000000000000001F,
+			);
+		};
+	};
+	rootObject = 000000000000000000000020;
+}
