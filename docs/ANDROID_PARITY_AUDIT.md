@@ -1,5 +1,11 @@
 # Android feature and action parity audit
 
+## iOS connection flow implementation checks
+
+- The iOS connection screen supports Bonjour discovery, direct server address entry, QR pairing, pairing-code entry, and capability-gated password sign-in. HTTP sign-in and pairing require an explicit acknowledgement that credentials and tokens are unencrypted.
+- Simulator checks: exercise manual probe and pairing/password screens against a test server; deny local-network access and confirm the Settings recovery action; deny camera access and confirm camera Settings recovery; scan valid and malformed QR payloads.
+- Physical-device checks before release: grant camera and local-network access, scan a real server QR code, verify Bonjour discovery across Wi-Fi/VLAN configurations, then revoke each permission in Settings and confirm recovery guidance. Simulator coverage cannot validate camera focus, real Bonjour network behavior, or router isolation.
+
 Pinned source: https://github.com/henriquesebastiao/downtify-android/tree/100be83e49c3250424e6326670a73bff69325b73. Findings describe Android behavior; iOS implementation status remains to be compared.
 
 | Area / screen | Concrete behavior and parity target | Capability / version gate | Contract, tests, unknowns |

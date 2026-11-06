@@ -1,4 +1,6 @@
 import SwiftUI
+import AVFoundation
+import UIKit
 
 @MainActor
 struct FoundationView: View {
@@ -24,6 +26,8 @@ struct FoundationView: View {
 
     @Environment(\.downtifyPalette) private var palette
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openURL) private var openURL
+    @State private var showingScanner = false
 
     private var contentWidth: CGFloat {
         horizontalSizeClass == .regular ? 560 : 440
@@ -106,12 +110,30 @@ struct FoundationView: View {
                 Button { model.startDiscovery() } label: {
                     Label(model.isDiscovering ? "Searching local network…" : "Find servers on this network", systemImage: "dot.radiowaves.left.and.right")
                 }.disabled(model.isWorking)
+                Button { showingScanner = true } label: {
+                    Label("Scan pairing QR code", systemImage: "qrcode.viewfinder")
+                }.disabled(model.isWorking)
+                .sheet(isPresented: $showingScanner) {
+                    PairingCodeScanner { value in
+                        showingScanner = false
+                        model.acceptPairingPayload(value)
+                    }
+                    .presentationDetents([.medium, .large])
+                }
                 ForEach(model.servers, id: \.address.baseURL.absoluteString) { server in
                     Button { model.probe(server) } label: {
                         VStack(alignment: .leading) { Text(server.name).fontWeight(.medium); Text(server.address.baseURL.absoluteString).font(.caption).foregroundStyle(DowntifyStyle.secondaryText) }
                     }
                 }
-                if model.discoveryMessage != nil { Text(model.discoveryMessage!).font(.caption).foregroundStyle(DowntifyStyle.secondaryText) }
+                if let message = model.discoveryMessage {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message).font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                        if model.needsPermissionRecovery {
+                            Button("Open Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                }
                 if let error = model.error { Text(error).foregroundStyle(DowntifyStyle.error).fixedSize(horizontal: false, vertical: true) }
 
                 if let target = model.target {
@@ -132,7 +154,11 @@ struct FoundationView: View {
                             .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
                     }
                     if target.usesInsecureHTTP {
-                        Toggle("I understand this connection is not encrypted", isOn: $model.consentToInsecureHTTP)
+                        Label("This server uses unencrypted HTTP", systemImage: "lock.slash.fill")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(DowntifyStyle.error)
+                        Text("Your password, pairing code, and access token could be read by others on the network.")
+                            .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                        Toggle("I understand and want to continue", isOn: $model.consentToInsecureHTTP)
                             .font(.caption)
                     }
                 }
@@ -162,10 +188,12 @@ private final class ConnectionFlowModel: ObservableObject {
     @Published var consentToInsecureHTTP = false
     @Published var discoveryMessage: String?
     @Published var cooldownSeconds = 0
+    @Published var needsPermissionRecovery = false
     private let connection: ConnectionService
     private let discovery: BonjourServerDiscovery
     private let deviceName: String
     private var connectionTarget: ConnectionTarget?
+    private var scannedPayload: PairingPayload?
     private var discoveryTask: Task<Void, Never>?
     private var cooldownTask: Task<Void, Never>?
 
@@ -174,13 +202,16 @@ private final class ConnectionFlowModel: ObservableObject {
     }
     func startDiscovery() {
         discoveryTask?.cancel(); isDiscovering = true; discoveryMessage = nil
+        needsPermissionRecovery = false
         discoveryTask = Task {
             for await snapshot in discovery.snapshots() {
                 servers = snapshot.servers
                 switch snapshot.status {
                 case .searching: break
                 case .ready: discoveryMessage = servers.isEmpty ? "No Downtify servers found yet." : nil
-                case .localNetworkUnavailable: discoveryMessage = "Allow local network access in Settings to discover servers."
+                case .localNetworkUnavailable:
+                    discoveryMessage = "Local network access is off. Enable it in Settings to find nearby servers."
+                    needsPermissionRecovery = true
                 case .waiting: discoveryMessage = "Waiting for the local network…"
                 case .failed: discoveryMessage = "Server discovery failed. Enter an address above instead."
                 }
@@ -188,8 +219,20 @@ private final class ConnectionFlowModel: ObservableObject {
             isDiscovering = false
         }
     }
-    func probeAddress() { consentToInsecureHTTP = false; let connection = self.connection, address = self.address; run { try await connection.probe(address) } }
-    func probe(_ server: DiscoveredServer) { consentToInsecureHTTP = false; let connection = self.connection; run { try await connection.probe(server) } }
+    func acceptPairingPayload(_ value: String) {
+        do {
+            let payload = try PairingPayload(value)
+            scannedPayload = payload
+            address = payload.address.baseURL.absoluteString
+            pairingCode = payload.code
+            consentToInsecureHTTP = false
+            error = nil
+            let connection = self.connection
+            run { try await connection.probe(payload.address.baseURL.absoluteString) }
+        } catch { self.error = Self.message(error) }
+    }
+    func probeAddress() { scannedPayload = nil; consentToInsecureHTTP = false; let connection = self.connection, address = self.address; run { try await connection.probe(address) } }
+    func probe(_ server: DiscoveredServer) { scannedPayload = nil; consentToInsecureHTTP = false; let connection = self.connection; run { try await connection.probe(server) } }
     private func run(_ action: @escaping () async throws -> ConnectionTarget) {
         isWorking = true; error = nil; target = nil; connectionTarget = nil; consentToInsecureHTTP = false
         Task { do {
@@ -205,7 +248,19 @@ private final class ConnectionFlowModel: ObservableObject {
             isWorking = false }
     }
     func signIn() { guard let target = connectionTarget else { return }; let username = self.username, password = self.password, deviceName = self.deviceName, connection = self.connection, consent = consentToInsecureHTTP; authenticate { try await connection.signIn(username: username, password: password, at: target, deviceName: deviceName, consentingTo: consent ? target.address : nil) } }
-    func pair() { guard let target = connectionTarget else { return }; let code = pairingCode, deviceName = self.deviceName, connection = self.connection, consent = consentToInsecureHTTP; authenticate { try await connection.pair(code: code, at: target, deviceName: deviceName, consentingTo: consent ? target.address : nil) } }
+    func pair() {
+        guard let target = connectionTarget else { return }
+        let code = pairingCode, deviceName = self.deviceName, connection = self.connection
+        let consent = consentToInsecureHTTP, payload = scannedPayload
+        authenticate {
+            if let payload {
+                return try await connection.pair(payload, deviceName: deviceName,
+                    consentingTo: consent ? target.address : nil)
+            }
+            return try await connection.pair(code: code, at: target, deviceName: deviceName,
+                consentingTo: consent ? target.address : nil)
+        }
+    }
     private func authenticate(_ action: @escaping () async throws -> DeviceSession) {
         guard cooldownSeconds == 0 else { return }
         isWorking = true; error = nil
@@ -243,6 +298,104 @@ private final class ConnectionFlowModel: ObservableObject {
         case APIError.transportFailure: return "Could not reach this server. Check the address and network connection."
         default: return "Could not connect. Check the server address and try again."
         }
+    }
+}
+
+@MainActor
+private struct PairingCodeScanner: View {
+    let onCode: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var cameraDenied = false
+    @State private var scanError: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if cameraDenied {
+                    ContentUnavailableView("Camera access is off", systemImage: "camera.fill",
+                        description: Text("Allow camera access in Settings to scan a pairing code."))
+                    Button("Open Settings") { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) }
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    CameraQRReader(onCode: onCode, onDenied: { cameraDenied = true }, onError: { scanError = $0 })
+                        .overlay(alignment: .bottom) {
+                            Text(scanError ?? "Point your camera at the server’s pairing QR code.")
+                                .font(.callout).padding().frame(maxWidth: .infinity)
+                                .background(.ultraThinMaterial)
+                        }
+                }
+            }
+            .navigationTitle("Scan pairing code")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+private struct CameraQRReader: UIViewControllerRepresentable {
+    let onCode: (String) -> Void
+    let onDenied: () -> Void
+    let onError: (String) -> Void
+    func makeUIViewController(context: Context) -> QRReaderController {
+        let controller = QRReaderController()
+        controller.onCode = onCode; controller.onDenied = onDenied; controller.onError = onError
+        return controller
+    }
+    func updateUIViewController(_ controller: QRReaderController, context: Context) {}
+    static func dismantleUIViewController(_ controller: QRReaderController, coordinator: ()) {
+        controller.stop()
+    }
+}
+
+private final class QRReaderController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onCode: ((String) -> Void)?
+    var onDenied: (() -> Void)?
+    var onError: ((String) -> Void)?
+    private let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "app.downtify.qr-camera-session")
+    private var preview: AVCaptureVideoPreviewLayer?
+    private var delivered = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: configure()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async { granted ? self?.configure() : self?.onDenied?() }
+            }
+        default: onDenied?()
+        }
+    }
+    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); preview?.frame = view.bounds }
+    private func configure() {
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
+            onError?("Camera is unavailable on this device."); return
+        }
+        session.addInput(input)
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else { onError?("Could not start the camera scanner."); return }
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.qr]
+        let layer = AVCaptureVideoPreviewLayer(session: session)
+        layer.videoGravity = .resizeAspectFill; view.layer.addSublayer(layer); preview = layer
+        sessionQueue.async { [session] in session.startRunning() }
+    }
+    func stop() {
+        sessionQueue.async { [session] in
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !delivered, let value = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
+        delivered = true
+        guard (try? PairingPayload(value)) != nil else {
+            onError?("This QR code is not a Downtify pairing code."); delivered = false; return
+        }
+        session.stopRunning(); onCode?(value)
     }
 }
 

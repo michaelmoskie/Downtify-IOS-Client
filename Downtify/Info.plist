@@ -12,6 +12,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Find Downtify servers on your local network.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Use the camera to scan a Downtify server pairing QR code.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
