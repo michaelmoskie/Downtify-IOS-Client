@@ -5,6 +5,14 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000069 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloadsTests.swift; sourceTree = "<group>"; };
+		00000000000000000000006A = { isa = PBXBuildFile; fileRef = 000000000000000000000069; };
+		000000000000000000000067 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDownloadQueue.swift; sourceTree = "<group>"; };
+		000000000000000000000068 = { isa = PBXBuildFile; fileRef = 000000000000000000000067; };
+		000000000000000000000065 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloadAPI.swift; sourceTree = "<group>"; };
+		000000000000000000000066 = { isa = PBXBuildFile; fileRef = 000000000000000000000065; };
+		000000000000000000000063 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloads.swift; sourceTree = "<group>"; };
+		000000000000000000000064 = { isa = PBXBuildFile; fileRef = 000000000000000000000063; };
 		000000000000000000000061 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackNormalization.swift; sourceTree = "<group>"; };
 		000000000000000000000062 = { isa = PBXBuildFile; fileRef = 000000000000000000000061; };
 		00000000000000000000005F = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackReporting.swift; sourceTree = "<group>"; };
@@ -311,6 +319,7 @@
 		000000000000000000000044 = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000063,
 				000000000000000000000039,
 				00000000000000000000003B,
 				00000000000000000000003F,
@@ -351,6 +360,8 @@
 		00000000000000000000000D = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000067,
+				000000000000000000000065,
 				000000000000000000000037,
 				00000000000000000000003D,
 				000000000000000000000007,
@@ -386,6 +397,7 @@
 		000000000000000000000010 = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000069,
 				000000000000000000000057,
 				000000000000000000000041,
 				00000000000000000000004F,
@@ -431,6 +443,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000068,
+				000000000000000000000066,
+				000000000000000000000064,
 				000000000000000000000036,
 				000000000000000000000038,
 				00000000000000000000003A,
@@ -494,6 +509,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00000000000000000000006A,
 				000000000000000000000058,
 				00000000000000000000005C,
 				000000000000000000000042,

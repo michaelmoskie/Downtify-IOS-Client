@@ -70,20 +70,25 @@ final class AVPlaybackEngine: PlaybackEngining {
     func load(_ stream: PlaybackStream, at position: TimeInterval) async throws {
         reset()
         let generation = itemGeneration
-        var location = URLComponents()
-        location.scheme = "downtify-stream"
-        location.host = "audio"
-        location.path = "/track.\(stream.fileExtension)"
-        guard let url = location.url else { throw PlaybackFailure.invalidStream }
+        let asset: AVURLAsset
+        if let fileURL = stream.fileURL {
+            asset = AVURLAsset(url: fileURL)
+        } else {
+            var location = URLComponents()
+            location.scheme = "downtify-stream"
+            location.host = "audio"
+            location.path = "/track.\(stream.fileExtension)"
+            guard let url = location.url else { throw PlaybackFailure.invalidStream }
 
-        let asset = AVURLAsset(url: url)
-        let loader = AudioRangeLoader(stream: stream)
-        self.loader = loader
-        loader.onFailure = { [weak self] failure in
-            guard self?.itemGeneration == generation else { return }
-            self?.onEvent?(.failed(failure))
+            asset = AVURLAsset(url: url)
+            let loader = AudioRangeLoader(stream: stream)
+            self.loader = loader
+            loader.onFailure = { [weak self] failure in
+                guard self?.itemGeneration == generation else { return }
+                self?.onEvent?(.failed(failure))
+            }
+            asset.resourceLoader.setDelegate(loader, queue: .main)
         }
-        asset.resourceLoader.setDelegate(loader, queue: .main)
 
         guard try await asset.load(.isPlayable) else { throw PlaybackFailure.unsupportedFormat }
         try ensureCurrent(generation)

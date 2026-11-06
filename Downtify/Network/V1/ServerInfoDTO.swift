@@ -10,10 +10,12 @@ enum MobileAPIV1 {
                 let bitrates: [Int]?
             }
 
+            let signedURLs: Bool?
             let passwordSignIn: Bool?
             let transcoding: Transcoding?
 
             enum CodingKeys: String, CodingKey {
+                case signedURLs = "signed_urls"
                 case passwordSignIn = "password_sign_in"
                 case transcoding
             }

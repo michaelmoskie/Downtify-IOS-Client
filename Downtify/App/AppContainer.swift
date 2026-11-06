@@ -9,6 +9,8 @@ struct AppContainer {
     let libraryPresentation: LibraryPresentationModel
     let playback: PlaybackController
     let artwork: ArtworkLoader
+    let offlineDownloads: OfflineDownloads
+    let serverDownloadQueue: ServerDownloadQueue
 
     init(displayName: String = "Downtify") {
         self.displayName = displayName
@@ -37,8 +39,11 @@ struct AppContainer {
         let verifyPlaybackSession: (DeviceSession) async -> Void = {
             _ = try? await connection.verifySession(expected: $0)
         }
+        offlineDownloads = .live
+        offlineDownloads.verifySession = verifyPlaybackSession
+        serverDownloadQueue = ServerDownloadQueue(verifySession: verifyPlaybackSession)
         playback = PlaybackController(
-            engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache),
+            engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
             store: PlaybackStateStore(), networkMonitor: SystemPlaybackNetworkMonitor(),
             cache: playbackCache, reporting: PlaybackReporting(verifySession: verifyPlaybackSession),

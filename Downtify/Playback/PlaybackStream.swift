@@ -71,7 +71,20 @@ struct PlaybackStream: Sendable {
     let length: Int64
     let quality: PlaybackQuality
     let availableQualities: [PlaybackQuality]
+    let fileURL: URL?
     let read: @Sendable (ClosedRange<Int64>) async throws -> Data
+
+    init(contentType: String, fileExtension: String, length: Int64, quality: PlaybackQuality,
+         availableQualities: [PlaybackQuality], fileURL: URL? = nil,
+         read: @escaping @Sendable (ClosedRange<Int64>) async throws -> Data) {
+        self.contentType = contentType
+        self.fileExtension = fileExtension
+        self.length = length
+        self.quality = quality
+        self.availableQualities = availableQualities
+        self.fileURL = fileURL
+        self.read = read
+    }
 }
 
 protocol PlaybackStreamResolving {
@@ -86,13 +99,17 @@ extension PlaybackStreamResolving {
 struct PlaybackStreamResolver: PlaybackStreamResolving {
     private let transport: any HTTPDataLoading
     private let cache: PlaybackCache?
+    private let offline: (any OfflinePlaybackProviding)?
 
-    init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), cache: PlaybackCache? = nil) {
+    init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), cache: PlaybackCache? = nil,
+         offline: (any OfflinePlaybackProviding)? = nil) {
         self.transport = transport
         self.cache = cache
+        self.offline = offline
     }
 
     func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        if let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
         let (client, address, choices) = try await verifiedServer(for: session)
         let quality = choices.contains(preference) ? preference : .original
         let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
@@ -120,7 +137,8 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     }
 
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {
-        guard case .transcoded = quality else { return }
+        guard case .transcoded = quality,
+              await offline?.offlineStream(trackID: track.id, session: session) == nil else { return }
         let (client, address, choices) = try await verifiedServer(for: session)
         guard choices.contains(quality) else { return }
         let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
@@ -140,7 +158,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         return (client, address, PlaybackQualities.available(on: server))
     }
 
-    private static func streamURL(address: ServerAddress, trackID: String, quality: PlaybackQuality) throws -> URL {
+    static func streamURL(address: ServerAddress, trackID: String, quality: PlaybackQuality) throws -> URL {
         // Track IDs are path components, not user-provided routes.
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
         guard !trackID.isEmpty, trackID.unicodeScalars.allSatisfy(allowed.contains),
@@ -156,7 +174,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         return url
     }
 
-    private static func mediaType(_ mime: String, filename: String) throws -> (uti: String, ext: String) {
+    static func mediaType(_ mime: String, filename: String) throws -> (uti: String, ext: String) {
         let ext: String
         switch mime {
         case "audio/mpeg", "audio/mp3": ext = "mp3"

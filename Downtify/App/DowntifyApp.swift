@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct DowntifyApp: App {
+    @UIApplicationDelegateAdaptor(OfflineDownloadAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     private let container = AppContainer()
 
@@ -12,15 +13,19 @@ struct DowntifyApp: App {
                 .tint(DowntifyStyle.accent)
                 .preferredColorScheme(.dark)
                 .environmentObject(container.artwork)
+                .environmentObject(container.offlineDownloads)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             container.librarySync.setActive(phase == .active)
             if phase == .active {
+                container.offlineDownloads.observeSessions { try await container.connectionService.sessionUpdates() }
+                container.offlineDownloads.reconnect()
                 container.playback.observeSessions(
                     updates: { try await container.connectionService.sessionUpdates() },
                     tracks: { try await container.library.snapshot().tracks }
                 )
             } else {
+                container.offlineDownloads.persistProgress()
                 container.playback.persist()
             }
         }

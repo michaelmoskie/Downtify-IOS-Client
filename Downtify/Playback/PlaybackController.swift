@@ -41,6 +41,7 @@ final class PlaybackController: ObservableObject {
     private var lastSavedPosition: TimeInterval = 0
     private var sessionTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
+    private var loadedFromDisk = false
     private var loadGeneration = 0
     private var prefetchTask: Task<Void, Never>?
     private var prefetchedTracks: [LibraryTrack] = []
@@ -320,6 +321,7 @@ final class PlaybackController: ObservableObject {
                 try requireCurrentLoad(generation)
                 availableQualities = stream.availableQualities
                 streamQuality = stream.quality
+                loadedFromDisk = stream.fileURL != nil
                 let initial = position
                 try await engine.load(stream, at: initial)
                 try requireCurrentLoad(generation)
@@ -364,6 +366,7 @@ final class PlaybackController: ObservableObject {
         loadTask?.cancel()
         loadTask = nil
         loaded = false
+        loadedFromDisk = false
         streamQuality = nil
         engine.reset()
     }
@@ -482,7 +485,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func reloadForQualityChange() {
-        guard queue.current != nil else { return }
+        guard queue.current != nil, !loadedFromDisk else { return }
         if wantsPlayback {
             loadCurrent()
         } else if loaded {
@@ -569,7 +572,7 @@ final class PlaybackController: ObservableObject {
                     continue
                 }
                 guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
-                      !Task.isCancelled else { continue }
+                      stream.fileURL == nil, !Task.isCancelled else { continue }
                 // Resolving the ranged URL also materializes supported transcodes on the server.
                 _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
             }

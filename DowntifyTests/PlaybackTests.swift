@@ -527,6 +527,22 @@ final class PlaybackTests: XCTestCase {
         return try JSONDecoder().decode(MobileAPIV1.ServerInfoDTO.self, from: JSONSerialization.data(withJSONObject: body))
     }
 
+    @MainActor
+    func testAVFoundationLoadsSavedWaveDirectlyWithoutRangeReads() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        let bytes = waveFixture()
+        try bytes.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let stream = PlaybackStream(contentType: UTType.wav.identifier, fileExtension: "wav", length: Int64(bytes.count),
+                                    quality: .original, availableQualities: [.original], fileURL: url) { _ in
+            XCTFail("The player should read the local asset directly")
+            throw PlaybackFailure.network
+        }
+        let engine = AVPlaybackEngine()
+        defer { engine.reset() }
+        try await engine.load(stream, at: 0)
+    }
+
     private func waveFixture() -> Data {
         let samples = Data(repeating: 0, count: 16_000)
         var wave = Data()

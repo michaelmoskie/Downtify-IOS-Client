@@ -61,9 +61,10 @@ struct APIClient {
         self.allowsInsecureRequests = allowsInsecureRequests
     }
 
-    func serverInfo(at address: ServerAddress) async throws -> MobileAPIV1.ServerInfoDTO {
+    func serverInfo(at address: ServerAddress, allowsCellularAccess: Bool = true) async throws -> MobileAPIV1.ServerInfoDTO {
         var request = URLRequest(url: address.url(for: MobileAPIV1.serverInfoPath))
         request.httpMethod = "GET"
+        request.allowsCellularAccess = allowsCellularAccess
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, _) = try await load(request, address: address, isPublicServerInfo: true)
         let info: MobileAPIV1.ServerInfoDTO
