@@ -9,7 +9,8 @@ struct DowntifyApp: App {
     var body: some Scene {
         WindowGroup {
             AppShellView(name: container.displayName, presentation: container.sessionPresentation,
-                         library: container.libraryPresentation, playback: container.playback)
+                         library: container.libraryPresentation, playback: container.playback,
+                         serverDownloadQueue: container.serverDownloadQueue)
                 .environmentObject(container.artwork)
                 .environmentObject(container.collections)
                 .task { container.collections.start() }

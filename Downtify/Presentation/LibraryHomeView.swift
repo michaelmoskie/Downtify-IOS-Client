@@ -6,6 +6,7 @@ struct LibraryHomeView: View {
     let playback: PlaybackController
     @Binding var appearance: DowntifyAppearance
     let connection: ConnectionService
+    let serverDownloadQueue: ServerDownloadQueue
     let signOut: @MainActor () async throws -> Void
     @EnvironmentObject private var collections: LibraryCollectionsModel
     @Environment(\.downtifyPalette) private var palette
@@ -19,7 +20,7 @@ struct LibraryHomeView: View {
     @State private var signOutError: String?
     @State private var tab = Tab.home
 
-    private enum Tab { case home, library, search, discover, podcasts }
+    private enum Tab { case home, library, search, discover, downloads, podcasts }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -52,6 +53,10 @@ struct LibraryHomeView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
+
+            DownloadsView(connection: connection, queue: serverDownloadQueue, playback: playback, library: library)
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }.tag(Tab.downloads)
 
             PodcastsView(connection: connection, playback: playback)
                 .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
