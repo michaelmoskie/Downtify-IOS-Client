@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SwiftUI
 
 enum LibraryTrackOrdering {
     static func sorted(_ tracks: [LibraryTrack]) -> [LibraryTrack] {
@@ -161,7 +162,7 @@ final class LibraryCollectionsModel: ObservableObject {
     @Published private(set) var playlistState: State = .loading
     @Published private(set) var likesState: State = .loading
     @Published private(set) var mutationBusy = false
-    @Published private(set) var actionError: String?
+    @Published private(set) var actionError: LocalizedStringKey?
     private let api: any LibraryCollectionsFetching
     private let database: LibraryDatabase
     private let sessionUpdates: @Sendable () async throws -> AsyncStream<DeviceSession?>
@@ -275,7 +276,7 @@ final class LibraryCollectionsModel: ObservableObject {
         }
     }
 
-    private func mutate(failure: String, write: (DeviceSession) async throws -> Void, apply: () -> Void) async {
+    private func mutate(failure: LocalizedStringKey, write: (DeviceSession) async throws -> Void, apply: () -> Void) async {
         guard let session, !mutationBusy else { return }
         let request = generation
         mutationBusy = true

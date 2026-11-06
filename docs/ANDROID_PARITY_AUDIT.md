@@ -41,6 +41,18 @@ This inventory is from the pinned Android UI/data sources, not an inferred iOS d
 
 The persisted settings model also has **library layout** (Grid/List), **library sort** (Recently added, Alphabetical, Artist), and **descending order**. These do not appear on the Settings screen: [LibraryScreen](https://github.com/henriquesebastiao/downtify-android/blob/100be83e49c3250424e6326670a73bff69325b73/app/src/main/kotlin/com/henriquesebastiao/downtify/feature/library/LibraryScreen.kt) exposes layout for non-Songs tabs and a sort bottom sheet for all tabs; the sort sheet offers Ascending/Descending and the three sort modes. Recently added defaults descending; picking a different sort resets to that sort's default direction. Songs are always list layout.
 
+### iOS settings, appearance, About and localization (Task 17)
+
+iOS exposes Settings from the account menu. The screen persists System/Light/Dark/OLED black appearance and supports app-language selection for Bulgarian, English, French, Greek, Hungarian, Brazilian Portuguese, Spanish and Turkish; System default follows the device locale. About shows bundle version/build and links to server source, the issue tracker, the current server AGPL-3.0 license, the pinned Android reference app's GPL-3.0 license, and the iOS client repository. Navigation, Connect, library, playback, podcast, download and trash UI source strings are represented in all eight `Localizable.strings` tables (313-key source/table parity and localized placeholder parity are checked by `scripts/check_localization_parity.py`). String-backed helper titles and error states are converted to localized keys; server-supplied titles/descriptions and other dynamic media metadata remain in their source language. Layout uses native Form/NavigationStack controls, Dynamic Type, wrapping explanatory text and system accessibility labels.
+
+All source keys now have localized values; standard shared words, the Downtify brand, empty/punctuation-only strings, and format-only values remain identical where appropriate. Translation quality has not had native-speaker review, especially for long explanatory and error messages. The repository contains no iOS client `LICENSE` file and no third-party font or asset license notices were found; the client distribution license and any dependency notice obligations remain unresolved. The Android reference app license is GPL-3.0 at the pinned SHA; the current server default-branch license is AGPL-3.0. The server license is not pinned to the Android source revision. Artwork/media rights remain with the server and their respective providers. Android-specific wallpaper colors, custom fonts, and floating navigation are not applicable to this iOS implementation.
+
+The simulator app target builds successfully, all eight strings files and the Xcode project pass `plutil -lint`, and the localization checker passes for all 313 source keys and placeholders. The full simulator suite executed 81 tests; 2 existing Keychain session tests failed with OSStatus `-34018`. UI appearance was not visually reviewed on physical devices; native-speaker translation review and license decisions remain release follow-ups.
+
+### Plan deviation: CarPlay
+
+Task 18 (CarPlay) is skipped at the user's direction. No CarPlay integration, entitlement request, receiver test or vehicle test is included; this remains an explicit platform parity gap.
+
 ### Connect decision scenarios
 
 1. `GET /api/server/info` is public and is the compatibility/capability source. `product != "Downtify"` is rejected; `api_version > 1` is rejected as too new. The documented contract says refuse newer API versions; this source does not define a lower bound for `api_version` or a minimum semantic server version.

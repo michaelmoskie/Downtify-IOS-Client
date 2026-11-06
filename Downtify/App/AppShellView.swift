@@ -7,6 +7,7 @@ struct AppShellView: View {
     let playback: PlaybackController
     let serverDownloadQueue: ServerDownloadQueue
     @AppStorage(DowntifyAppearance.storageKey) private var appearance = DowntifyAppearance.system
+    @AppStorage("downtify.language") private var language = "system"
 
     var body: some View {
         Group {
@@ -26,6 +27,7 @@ struct AppShellView: View {
             }
         }
         .downtifyAppearance(appearance)
+        .environment(\.locale, Locale(identifier: language == "system" ? Locale.current.identifier : language))
         .task { presentation.start(); library.start() }
     }
 }
@@ -693,7 +695,7 @@ private struct ArtworkPlaceholder: View {
     }
 }
 
-func playbackFailureMessage(_ failure: PlaybackFailure, isPodcast: Bool = false) -> String {
+func playbackFailureMessage(_ failure: PlaybackFailure, isPodcast: Bool = false) -> LocalizedStringKey {
     switch failure {
     case .signedOut: "Sign in to play this track"
     case .differentServer: isPodcast ? "This episode belongs to a different server" : "This track belongs to a different server"

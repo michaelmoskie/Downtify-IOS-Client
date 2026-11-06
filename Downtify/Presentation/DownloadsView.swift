@@ -12,9 +12,9 @@ struct DownloadsView: View {
     @State private var queueStatus: ServerDownloadQueue.Status?
     @State private var link = ""
     @State private var loadingQueue = false
-    @State private var queueError: String?
-    @State private var localError: String?
-    @State private var requestMessage: String?
+    @State private var queueError: LocalizedStringKey?
+    @State private var localError: LocalizedStringKey?
+    @State private var requestMessage: LocalizedStringKey?
 
     var body: some View {
         ScrollView {
@@ -33,7 +33,7 @@ struct DownloadsView: View {
         .refreshable { await refreshQueue() }
         .alert("Download request", isPresented: Binding(get: { requestMessage != nil }, set: { if !$0 { requestMessage = nil } })) {
             Button("OK", role: .cancel) { requestMessage = nil }
-        } message: { Text(requestMessage ?? "") }
+        } message: { if let requestMessage { Text(requestMessage) } }
     }
 
     private var localSection: some View {
@@ -176,7 +176,7 @@ struct DownloadsView: View {
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 20))
     }
 
-    private func localStatus(_ item: OfflineDownload) -> String {
+    private func localStatus(_ item: OfflineDownload) -> LocalizedStringKey {
         switch item.state {
         case .preparing: return "Preparing download"
         case .transferring:
@@ -480,7 +480,7 @@ struct AdminTrashView: View {
         if case ConnectionError.differentServer = error { return true }
         return false
     }
-    private func message(for error: Error) -> String {
+    private func message(for error: Error) -> LocalizedStringKey {
         if case let TrashAPIError.httpStatus(status, code) = error {
             if status == 403 { return "Administrator access changed. Music trash is now hidden." }
             if status == 404 { return "This server does not support music trash." }
@@ -498,8 +498,8 @@ struct AdminTrashView: View {
 
 private struct TrashAlert: Identifiable {
     let id = UUID()
-    let title: String
-    let message: String
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
 }
 
 struct MoveToTrashConfirmationView: View {
@@ -510,7 +510,7 @@ struct MoveToTrashConfirmationView: View {
     @State private var preview: TrashPreviewDTO?
     @State private var loading = true
     @State private var submitting = false
-    @State private var errorMessage: String?
+    @State private var errorMessage: LocalizedStringKey?
     @State private var submittedCount: Int?
 
     var body: some View {
@@ -562,7 +562,7 @@ struct MoveToTrashConfirmationView: View {
         .task(id: track.id) { await preparePreview() }
         .alert("Trash request failed", isPresented: Binding(get: { errorMessage != nil && !loading }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
-        } message: { Text(errorMessage ?? "") }
+        } message: { if let errorMessage { Text(errorMessage) } }
     }
 
     @MainActor private func preparePreview() async {
@@ -602,7 +602,7 @@ struct MoveToTrashConfirmationView: View {
         submitting = false
     }
 
-    private func failureMessage(_ error: Error) -> String {
+    private func failureMessage(_ error: Error) -> LocalizedStringKey {
         if case let TrashAPIError.httpStatus(status, code) = error {
             if status == 403 { return "Administrator access is no longer available. Nothing was moved." }
             if status == 404 { return "This server does not support music trash. Nothing was moved." }

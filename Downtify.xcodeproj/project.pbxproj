@@ -152,6 +152,27 @@
 			isa = PBXBuildFile;
 			fileRef = 000000000000000000000045;
 		};
+		000000000000000000000080 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000081 = { isa = PBXBuildFile; fileRef = 000000000000000000000080; };
+		000000000000000000000082 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000083 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = bg; path = bg.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000084 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000085 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = el; path = el.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000086 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hu; path = hu.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000087 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = pt-BR; path = pt-BR.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000088 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000089 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = tr; path = tr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000090 = { isa = PBXVariantGroup; children = (
+				000000000000000000000082,
+				000000000000000000000083,
+				000000000000000000000084,
+				000000000000000000000085,
+				000000000000000000000086,
+				000000000000000000000087,
+				000000000000000000000088,
+				000000000000000000000089,
+			); name = Localizable.strings; sourceTree = "<group>"; };
+		000000000000000000000091 = { isa = PBXBuildFile; fileRef = 000000000000000000000090; };
 		000000000000000000000001 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -371,6 +392,7 @@
 				00000000000000000000006B,
 				000000000000000000000071,
 				000000000000000000000077,
+				000000000000000000000080,
 				000000000000000000000075,
 			);
 			sourceTree = "<group>";
@@ -499,6 +521,7 @@
 				00000000000000000000002E,
 				000000000000000000000030,
 				000000000000000000000032,
+				000000000000000000000081,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -513,6 +536,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000091,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -714,6 +738,13 @@
 			knownRegions = (
 				en,
 				Base,
+				bg,
+				fr,
+				el,
+				hu,
+				pt-BR,
+				es,
+				tr,
 			);
 			mainGroup = 000000000000000000000014;
 			productRefGroup = 000000000000000000000013;

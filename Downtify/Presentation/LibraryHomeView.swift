@@ -14,12 +14,14 @@ struct LibraryHomeView: View {
     @AppStorage("library.sort") private var sort = LibrarySort.recentlyAdded
     @AppStorage("library.descending") private var descending = true
     @AppStorage("library.grid") private var grid = true
+    @AppStorage("downtify.language") private var language = "system"
     @State private var category = Category.albums
     @State private var searchText = ""
     @State private var showingSignOutConfirmation = false
-    @State private var signOutError: String?
+    @State private var signOutError: LocalizedStringKey?
     @State private var tab = Tab.home
     @State private var trashTrack: LibraryTrack?
+    @State private var showingSettings = false
 
     private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash }
     private enum Category: String, CaseIterable, Identifiable {
@@ -83,13 +85,18 @@ struct LibraryHomeView: View {
         }
         .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
             Button("OK", role: .cancel) { signOutError = nil }
-        } message: { Text(signOutError ?? "") }
+        } message: { if let signOutError { Text(signOutError) } }
         .sheet(item: $trashTrack) { track in
             NavigationStack {
                 MoveToTrashConfirmationView(track: track, connection: connection) {
                     trashTrack = nil
                     await refresh()
                 }
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                SettingsView(appearance: $appearance, language: $language)
             }
         }
     }
@@ -125,6 +132,7 @@ struct LibraryHomeView: View {
             Picker("Appearance", selection: $appearance) {
                 ForEach(DowntifyAppearance.allCases) { option in Text(option.label).tag(option) }
             }
+            Button("Settings", systemImage: "gearshape") { showingSettings = true }
             Button("Refresh library", systemImage: "arrow.clockwise") { Task { await refresh() } }
             Button("Sign out", role: .destructive) { showingSignOutConfirmation = true }
         } label: {
@@ -361,7 +369,7 @@ struct LibraryHomeView: View {
         if !library.tracks.isEmpty {
             switch library.state {
             case .cachedError(let message), .storageFailure(let message):
-                Label(message, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                Label(LocalizedStringKey(message), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("Showing saved music.").font(.caption).foregroundStyle(.secondary)
             default: EmptyView()
@@ -380,7 +388,7 @@ struct LibraryHomeView: View {
                                     retry: { Task { await refresh() } })
         case .cachedError(let message), .storageFailure(let message):
             DowntifyUnavailableView(title: "Library unavailable", symbol: "exclamationmark.triangle",
-                                    message: Text(message), retry: { Task { await refresh() } })
+                                    message: Text(LocalizedStringKey(message)), retry: { Task { await refresh() } })
         }
     }
 
@@ -467,7 +475,7 @@ private struct LibraryContextView: View {
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
     @State private var confirmingDownload = false
-    @State private var downloadMessage: String?
+    @State private var downloadMessage: LocalizedStringKey?
 
     private var playlist: LibraryPlaylist? {
         guard case .playlist(let name) = context else { return nil }
@@ -601,7 +609,7 @@ private struct LibraryContextView: View {
         }
         switch library.state {
         case .cachedError(let message), .storageFailure(let message):
-            Label(message, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+            Label(LocalizedStringKey(message), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                 .font(.subheadline).foregroundStyle(.secondary)
             Button("Retry library refresh") { Task { await library.refresh() } }
         case .loading, .refreshing:
@@ -622,7 +630,7 @@ private struct LibraryTrackList: View {
     @EnvironmentObject private var collections: LibraryCollectionsModel
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
-    @State private var downloadMessage: String?
+    @State private var downloadMessage: LocalizedStringKey?
 
     var body: some View {
         let downloadByID = Dictionary(downloads.currentDownloads.map { ($0.track.id, $0) },

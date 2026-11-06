@@ -85,3 +85,5 @@ Each implementation task includes its own meaningful unit or integration tests a
 
 A release candidate requires a clean build and automated suite on macOS, completed parity matrix, successful real-device background/lock-screen and offline tests, supported-server compatibility results, accessibility and localization checks, and no unresolved critical security, data-loss or playback defects. Record CarPlay entitlement and physical-vehicle results separately, together with any iOS or server limitations. App Store distribution additionally requires signing, privacy disclosures, ATS review and license compliance; resolve these with the project owner before submission.
 
+**Plan status note (2026-11-06):** Task 18 (CarPlay) is skipped at the user's direction. CarPlay integration, entitlement work and vehicle testing are outside this porting run and remain a documented parity gap.
+
