@@ -66,8 +66,9 @@ private struct AboutView: View {
                 }.padding(.vertical, 4)
             }
             Section("Project") {
-                Link("Source code", destination: URL(string: "https://github.com/henriquesebastiao/downtify")!)
-                Link("Report a bug", destination: URL(string: "https://github.com/henriquesebastiao/downtify/issues")!)
+                Link("iOS client repository", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client")!)
+                Link("Server source code", destination: URL(string: "https://github.com/henriquesebastiao/downtify")!)
+                Link("Report a bug", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client/issues")!)
             }
             Section("Acknowledgments and licenses") {
                 Text("Downtify for iOS is an independent client for the Downtify server. Artwork, names, and media are supplied by your server and their respective rights holders.")
@@ -76,7 +77,6 @@ private struct AboutView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Link("Server license (AGPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify/blob/main/LICENSE")!)
                 Link("Android reference app license (GPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify-android/blob/100be83e49c3250424e6326670a73bff69325b73/LICENSE")!)
-                Link("iOS client repository", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client")!)
             }
             Section("Disclaimer") {
                 Text("Downtify is provided as-is. Availability and playback depend on your server and its media sources.")

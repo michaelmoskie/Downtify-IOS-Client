@@ -264,7 +264,7 @@
 "Songs are retained for up to %lld days. The server performs file moves in the background." = "As músicas são mantidas por até %lld dias. O servidor move os arquivos em segundo plano.";
 "Sort by" = "Ordenar por";
 "Sort order" = "Ordem de classificação";
-"Source code" = "Código-fonte";
+"Server source code" = "Código-fonte do servidor";
 "Subscribe from the Downtify web app." = "Inscreva-se pelo app web do Downtify.";
 "System" = "Sistema";
 "System default" = "Padrão do sistema";

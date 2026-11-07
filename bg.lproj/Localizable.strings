@@ -264,7 +264,7 @@
 "Songs are retained for up to %lld days. The server performs file moves in the background." = "Песните се пазят до %lld дни. Сървърът премества файловете във фонов режим.";
 "Sort by" = "Сортиране по";
 "Sort order" = "Ред на сортиране";
-"Source code" = "Изходен код";
+"Server source code" = "Изходен код на сървъра";
 "Subscribe from the Downtify web app." = "Абонирайте се от уеб приложението Downtify.";
 "System" = "Системна";
 "System default" = "По подразбиране";
