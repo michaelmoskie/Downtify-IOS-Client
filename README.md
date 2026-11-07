@@ -2,6 +2,15 @@
 
 Downtify is a SwiftUI iPhone and iPad app targeting iOS 17 and later. It includes server connection and library flows, local library sync, and a playback experience with a persistent queue, queue editing, shuffle/repeat, and background and lock-screen controls. Automated tests use synthetic fixtures; the checklist below calls out manual simulator work that still needs a reachable server.
 
+## Screenshots
+
+<p>
+  <img src="screenshots/app-store/01-home.png" alt="Downtify home screen" width="24%">
+  <img src="screenshots/app-store/02-album.png" alt="Album view" width="24%">
+  <img src="screenshots/app-store/03-now-playing.png" alt="Now Playing screen" width="24%">
+  <img src="screenshots/app-store/04-queue.png" alt="Play queue" width="24%">
+</p>
+
 ## Build and test on a Mac
 
 Open `Downtify.xcodeproj` with the installed Xcode version. Install an iOS simulator runtime in Xcode Settings, choose the shared **Downtify** scheme and an iPhone or iPad simulator, then use **Product → Run** and **Product → Test**. Simulator builds do not need a development team.

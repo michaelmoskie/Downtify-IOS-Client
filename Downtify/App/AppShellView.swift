@@ -6,7 +6,7 @@ struct AppShellView: View {
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
     let serverDownloadQueue: ServerDownloadQueue
-    @AppStorage(DowntifyAppearance.storageKey) private var appearance = DowntifyAppearance.system
+    @AppStorage(DowntifyAppearance.storageKey) private var appearance = DowntifyAppearance.dark
     @AppStorage("downtify.language") private var language = "system"
 
     var body: some View {
