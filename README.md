@@ -37,7 +37,11 @@ Manual server-backed playback, persistence across an app relaunch, and lock-scre
 
 ## Server instance
 
-The project server instance is [[private server]]([private server]). Use it for integration validation when the relevant features are ready.
+You can test the app with your own reachable Downtify server instance.
+
+## License
+
+This project is licensed under the [GNU General Public License version 3](LICENSE), matching the Android reference app.
 
 ## Boundaries and platform decisions
 
