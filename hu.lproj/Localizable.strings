@@ -264,7 +264,7 @@
 "Songs are retained for up to %lld days. The server performs file moves in the background." = "A dalok legfeljebb %lld napig maradnak meg. A szerver a háttérben helyezi át a fájlokat.";
 "Sort by" = "Rendezés";
 "Sort order" = "Rendezési sorrend";
-"Source code" = "Forráskód";
+"Server source code" = "A szerver forráskódja";
 "Subscribe from the Downtify web app." = "A Downtify webalkalmazásban iratkozzon fel.";
 "System" = "Rendszer";
 "System default" = "Rendszer alapértelmezése";

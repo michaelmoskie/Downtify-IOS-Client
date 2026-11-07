@@ -264,7 +264,7 @@
 "Songs are retained for up to %lld days. The server performs file moves in the background." = "Τα τραγούδια διατηρούνται έως %lld ημέρες. Ο διακομιστής μετακινεί τα αρχεία στο παρασκήνιο.";
 "Sort by" = "Ταξινόμηση κατά";
 "Sort order" = "Σειρά ταξινόμησης";
-"Source code" = "Πηγαίος κώδικας";
+"Server source code" = "Πηγαίος κώδικας διακομιστή";
 "Subscribe from the Downtify web app." = "Εγγραφείτε μέσω της εφαρμογής ιστού Downtify.";
 "System" = "Σύστημα";
 "System default" = "Προεπιλογή συστήματος";

@@ -264,7 +264,7 @@
 "Songs are retained for up to %lld days. The server performs file moves in the background." = "Şarkılar en fazla %lld gün saklanır. Sunucu dosyaları arka planda taşır.";
 "Sort by" = "Sıralama ölçütü";
 "Sort order" = "Sıralama düzeni";
-"Source code" = "Kaynak kodu";
+"Server source code" = "Sunucu kaynak kodu";
 "Subscribe from the Downtify web app." = "Downtify web uygulamasından abone olun.";
 "System" = "Sistem";
 "System default" = "Sistem varsayılanı";
