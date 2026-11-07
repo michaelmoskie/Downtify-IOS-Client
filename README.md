@@ -35,6 +35,14 @@ Run the test suite above for deterministic playback, persistence, network-contra
 
 Manual server-backed playback, persistence across an app relaunch, and lock-screen behavior require a reachable server and device/simulator interaction; automated fixture tests alone do not verify these end-to-end steps.
 
+## Server instance
+
+You can test the app with your own reachable Downtify server instance.
+
+## License
+
+This project is licensed under the [GNU General Public License version 3](LICENSE), matching the Android reference app.
+
 ## Boundaries and platform decisions
 
 - **App** owns composition. The SwiftUI App holds a single container across scenes. Add concrete adapters at this boundary as their features land and pass feature dependencies through initializers. Presentation owns scene and main-actor UI state. Future playback and transfer coordinators should be process-scoped, with their mutable state isolated from views.
