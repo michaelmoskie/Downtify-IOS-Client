@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "Абонирайте се от уеб приложението Downtify.";
 "System" = "Системна";
 "System default" = "По подразбиране";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "Сървърът Downtify се разпространява под GNU Affero General Public License версия 3.0. За това хранилище на iOS клиента няма обявен лиценз за разпространение; преди повторно разпространение се обърнете към поддържащите проекта.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Сървърът Downtify се разпространява под GNU Affero General Public License версия 3.0. Този iOS клиент се разпространява под GNU General Public License версия 3.0.";
 "The audio stream is unavailable" = "Аудио потокът не е наличен";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Провереният договор на сървъра не дефинира крайна точка за каталог „Откриване“. Запазената ви библиотека остава достъпна в „Библиотека“ и „Търсене“.";
 "The files may still be moving. The library updates after sync." = "Файловете може все още да се преместват. Библиотеката се обновява след синхронизация.";

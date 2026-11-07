@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "Subscribe from the Downtify web app.";
 "System" = "System";
 "System default" = "System default";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0.";
 "The audio stream is unavailable" = "The audio stream is unavailable";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search.";
 "The files may still be moving. The library updates after sync." = "The files may still be moving. The library updates after sync.";

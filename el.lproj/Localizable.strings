@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "Εγγραφείτε μέσω της εφαρμογής ιστού Downtify.";
 "System" = "Σύστημα";
 "System default" = "Προεπιλογή συστήματος";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "Ο διακομιστής Downtify διανέμεται με GNU Affero General Public License έκδοση 3.0. Δεν έχει δηλωθεί άδεια διανομής για αυτό το αποθετήριο πελάτη iOS· επικοινωνήστε με τους συντηρητές του έργου πριν από αναδιανομή.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Ο διακομιστής Downtify διανέμεται με GNU Affero General Public License έκδοση 3.0. Αυτός ο πελάτης iOS διανέμεται με GNU General Public License έκδοση 3.0.";
 "The audio stream is unavailable" = "Η ροή ήχου δεν είναι διαθέσιμη";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Η ελεγμένη σύμβαση διακομιστή δεν ορίζει σημείο καταλόγου Ανακάλυψης. Η αποθηκευμένη βιβλιοθήκη σας παραμένει διαθέσιμη στη Βιβλιοθήκη και στην Αναζήτηση.";
 "The files may still be moving. The library updates after sync." = "Η μεταφορά αρχείων μπορεί να συνεχίζεται. Η βιβλιοθήκη ενημερώνεται μετά τον συγχρονισμό.";

@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "Suscríbete desde la aplicación web de Downtify.";
 "System" = "Sistema";
 "System default" = "Predeterminado del sistema";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "El servidor Downtify se distribuye bajo la GNU Affero General Public License v3.0. Este repositorio del cliente iOS no declara una licencia de distribución; consulta a los responsables del proyecto antes de redistribuirlo.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "El servidor Downtify se distribuye bajo la GNU Affero General Public License v3.0. Este cliente iOS se distribuye bajo la GNU General Public License v3.0.";
 "The audio stream is unavailable" = "La transmisión de audio no está disponible";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "El contrato verificado del servidor no define un endpoint de catálogo para Descubrir. Tu biblioteca guardada sigue disponible en Biblioteca y Buscar.";
 "The files may still be moving. The library updates after sync." = "Es posible que los archivos sigan moviéndose. La biblioteca se actualiza tras sincronizar.";

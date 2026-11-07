@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "A Downtify webalkalmazásban iratkozzon fel.";
 "System" = "Rendszer";
 "System default" = "Rendszer alapértelmezése";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "A Downtify szerver GNU Affero General Public License 3.0 licenc alatt érhető el. Ehhez az iOS-kliens-adattárhoz nincs deklarált terjesztési licenc; újraterjesztés előtt keresse meg a projekt karbantartóit.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "A Downtify szerver GNU Affero General Public License 3.0 licenc alatt érhető el. Ez az iOS-kliens GNU General Public License 3.0 licenc alatt érhető el.";
 "The audio stream is unavailable" = "A hangfolyam nem érhető el";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Az ellenőrzött szerver szerződés nem határoz meg Felfedezés katalógusvégpontot. A mentett könyvtár továbbra is elérhető a Könyvtár és Keresés nézetben.";
 "The files may still be moving. The library updates after sync." = "A fájlok áthelyezése még folyamatban lehet. A könyvtár szinkronizálás után frissül.";

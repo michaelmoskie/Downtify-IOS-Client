@@ -72,11 +72,11 @@ private struct AboutView: View {
             Section("Acknowledgments and licenses") {
                 Text("Downtify for iOS is an independent client for the Downtify server. Artwork, names, and media are supplied by your server and their respective rights holders.")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution.")
+                Text("The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0.")
                     .fixedSize(horizontal: false, vertical: true)
                 Link("Server license (AGPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify/blob/main/LICENSE")!)
                 Link("Android reference app license (GPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify-android/blob/100be83e49c3250424e6326670a73bff69325b73/LICENSE")!)
-                Link("iOS client repository", destination: URL(string: "https://github.com/henriquesebastiao/Downtify-IOS")!)
+                Link("iOS client repository", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client")!)
             }
             Section("Disclaimer") {
                 Text("Downtify is provided as-is. Availability and playback depend on your server and its media sources.")

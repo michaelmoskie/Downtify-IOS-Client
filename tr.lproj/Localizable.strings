@@ -268,7 +268,7 @@
 "Subscribe from the Downtify web app." = "Downtify web uygulamasından abone olun.";
 "System" = "Sistem";
 "System default" = "Sistem varsayılanı";
-"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client repository has no declared distribution license; ask the project maintainers before redistribution." = "Downtify sunucusu GNU Affero General Public License 3.0 altında dağıtılır. Bu iOS istemci deposu için bir dağıtım lisansı belirtilmemiştir; yeniden dağıtmadan önce proje sorumlularına danışın.";
+"The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Downtify sunucusu GNU Affero General Public License 3.0 altında dağıtılır. Bu iOS istemcisi GNU General Public License 3.0 altında dağıtılır.";
 "The audio stream is unavailable" = "Ses akışı kullanılamıyor";
 "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Denetlenen sunucu sözleşmesi Keşfet kataloğu uç noktası tanımlamıyor. Kaydedilen kitaplığınız Kitaplık ve Ara’da kullanılabilir.";
 "The files may still be moving. The library updates after sync." = "Dosyalar hâlâ taşınıyor olabilir. Kitaplık eşitlemeden sonra güncellenir.";
