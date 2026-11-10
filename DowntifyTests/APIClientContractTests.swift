@@ -301,3 +301,107 @@ private final class StubLoader: HTTPDataLoading {
         return (body, response)
     }
 }
+import Foundation
+import XCTest
+@testable import Downtify
+
+final class ServerDownloadQueueTests: XCTestCase {
+    func testCatalogTrackRequestSendsCompleteProviderPayloadAndPseudoURL() async throws {
+        let loader = QueueContractLoader(responses: [serverInfo, #""job-1""#])
+        let session = makeSession()
+        let song = try decodeSong(#"{"source":"text_search","song_id":"search-42","name":"Roads","artists":["Portishead"],"track_number":3,"duration":305,"url":"downtify-search:search-42","download_by_metadata":true,"provider_extra":{"rank":7}}"#)
+
+        let id = try await ServerDownloadQueue(transport: loader).requestTrack(song: song, session: session)
+
+        XCTAssertEqual(id, "job-1")
+        let request = try XCTUnwrap(loader.requests.last)
+        XCTAssertEqual(request.url?.path, "/music/api/download/url")
+        let queryItems = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(queryItems.first(where: { $0.name == "url" })?.value, "downtify-search:search-42")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token")
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["source"] as? String, "text_search")
+        XCTAssertEqual(json["song_id"] as? String, "search-42")
+        XCTAssertEqual(json["url"] as? String, "downtify-search:search-42")
+        XCTAssertEqual(json["track_number"] as? Int, 3)
+        XCTAssertEqual(json["download_by_metadata"] as? Bool, true)
+        XCTAssertEqual((json["provider_extra"] as? [String: Any])?["rank"] as? Int, 7)
+    }
+
+    func testBatchRequestEncodesOptionsAndRawCatalogSongs() async throws {
+        let loader = QueueContractLoader(responses: [serverInfo, #"{"job_ids":["job-1","job-2"],"count":2}"#])
+        let songs = [
+            try decodeSong(#"{"source":"deezer","song_id":"dz-1","youtube_id":"yt-1","name":"One","artists":["A"],"url":"https://deezer.test/1","deezer_artist_id":"artist-1"}"#),
+            try decodeSong(#"{"source":"youtube","song_id":"yt-2","name":"Two","artists":["B"],"url":"https://music.youtube.com/watch?v=yt-2"}"#)
+        ]
+        let options = ServerDownloadQueue.BatchOptions(playlistURL: "https://playlist.test/1", playlistName: "Set", coverURL: "https://img.test/1", generateM3U: true)
+
+        let response = try await ServerDownloadQueue(transport: loader).requestBatch(songs: songs, options: options, session: makeSession())
+
+        XCTAssertEqual(response, .init(jobIDs: ["job-1", "job-2"], count: 2))
+        let request = try XCTUnwrap(loader.requests.last)
+        XCTAssertEqual(request.url?.path, "/music/api/download/batch")
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["playlist_url"] as? String, options.playlistURL)
+        XCTAssertEqual(json["playlist_name"] as? String, options.playlistName)
+        XCTAssertEqual(json["cover_url"] as? String, options.coverURL)
+        XCTAssertEqual(json["generate_m3u"] as? Bool, true)
+        let sentSongs = try XCTUnwrap(json["songs"] as? [[String: Any]])
+        XCTAssertEqual(sentSongs.count, 2)
+        XCTAssertEqual(sentSongs[0]["youtube_id"] as? String, "yt-1")
+        XCTAssertEqual(sentSongs[0]["deezer_artist_id"] as? String, "artist-1")
+    }
+
+    func testAlbumRequestRequiresSupportedYouTubeMusicFormAndEncodesURL() async throws {
+        let loader = QueueContractLoader(responses: [serverInfo, #"{"yt-1":"queued"}"#])
+        let url = "https://music.youtube.com/browse/MPREb_abc-123"
+
+        let response = try await ServerDownloadQueue(transport: loader).requestAlbum(url: url, session: makeSession())
+
+        XCTAssertEqual(response, ["yt-1": "queued"])
+        let request = try XCTUnwrap(loader.requests.last)
+        XCTAssertEqual(request.url?.path, "/music/api/download/album")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems?.first?.value, url)
+        XCTAssertFalse(ServerDownloadQueue.isYouTubeMusicAlbumURL("https://music.youtube.com/watch?v=abc"))
+    }
+
+    func testQueueJobsDecodeCurrentAndLegacySongFields() throws {
+        let data = Data(#"[{"song":{"song_id":"new-id","name":"Current","artists":["A","B"]},"status":"running","progress":0.5},{"song":{"id":"old-id","title":"Legacy","artist":"C"},"status":"done"}]"#.utf8)
+
+        let jobs = try JSONDecoder().decode([ServerDownloadQueue.Job].self, from: data)
+
+        XCTAssertEqual(jobs.map(\.id), ["new-id", "old-id"])
+        XCTAssertEqual(jobs[0].song.title, "Current")
+        XCTAssertEqual(jobs[0].song.artist, "A, B")
+        XCTAssertEqual(jobs[1].song.title, "Legacy")
+        XCTAssertEqual(jobs[1].song.artists, [])
+    }
+
+    private var serverInfo: String { #"{"product":"Downtify","api_version":1,"server_id":"server"}"# }
+
+    private func makeSession() -> DeviceSession {
+        DeviceSession(baseAddress: "https://example.test/music", serverID: "server", serverName: "Music",
+                      deviceID: "device", username: nil, role: nil, token: "token", allowsInsecureHTTP: false)
+    }
+
+    private func decodeSong(_ json: String) throws -> CatalogSong {
+        try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8))
+    }
+}
+
+private final class QueueContractLoader: HTTPDataLoading {
+    private var responses: [String]
+    private(set) var requests: [URLRequest] = []
+
+    init(responses: [String]) { self.responses = responses }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        guard !responses.isEmpty else { throw APIError.invalidResponse }
+        let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (Data(responses.removeFirst().utf8), response)
+    }
+}

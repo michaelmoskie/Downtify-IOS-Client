@@ -7,6 +7,12 @@
 	objects = {
 		000000000000000000000098 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPresentationModel.swift; sourceTree = "<group>"; };
 		000000000000000000000099 = { isa = PBXBuildFile; fileRef = 000000000000000000000098; };
+		0000000000000000000000A0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDownloadPresentationModel.swift; sourceTree = "<group>"; };
+		0000000000000000000000A1 = { isa = PBXBuildFile; fileRef = 0000000000000000000000A0; };
+		0000000000000000000000A2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogSearchView.swift; sourceTree = "<group>"; };
+		0000000000000000000000A3 = { isa = PBXBuildFile; fileRef = 0000000000000000000000A2; };
+		0000000000000000000000A4 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogDiscoverView.swift; sourceTree = "<group>"; };
+		0000000000000000000000A5 = { isa = PBXBuildFile; fileRef = 0000000000000000000000A4; };
 		00000000000000000000009A = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackQueueTests.swift; sourceTree = "<group>"; };
 		00000000000000000000009B = { isa = PBXBuildFile; fileRef = 00000000000000000000009A; };
 		00000000000000000000009C = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPlaybackStreamTests.swift; sourceTree = "<group>"; };
@@ -391,6 +397,7 @@
 		00000000000000000000000B = {
 			isa = PBXGroup;
 			children = (
+				0000000000000000000000A0,
 				000000000000000000000098,
 				000000000000000000000001,
 				000000000000000000000003,
@@ -405,6 +412,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000005,
+				0000000000000000000000A2,
+				0000000000000000000000A4,
 				00000000000000000000006B,
 				000000000000000000000071,
 				000000000000000000000077,
@@ -507,6 +516,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0000000000000000000000A1,
 				000000000000000000000099,
 				000000000000000000000097,
 				000000000000000000000095,
@@ -538,6 +548,8 @@
 				000000000000000000000006,
 				00000000000000000000006C,
 				000000000000000000000072,
+				0000000000000000000000A3,
+				0000000000000000000000A5,
 				000000000000000000000076,
 				000000000000000000000078,
 				000000000000000000000008,
