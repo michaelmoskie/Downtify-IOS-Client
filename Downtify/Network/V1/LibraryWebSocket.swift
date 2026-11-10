@@ -4,6 +4,7 @@ enum LibraryLiveEvent: Equatable {
     case connected
     case libraryChanged
     case collectionsChanged
+    case musicPolicyChanged
 
     static func decode(_ message: URLSessionWebSocketTask.Message) -> Self? {
         let data: Data
@@ -16,6 +17,7 @@ enum LibraryLiveEvent: Equatable {
         switch event.type {
         case "library_changed": return .libraryChanged
         case "playlists_changed", "likes": return .collectionsChanged
+        case "music_policy_changed": return .musicPolicyChanged
         default: return nil
         }
     }

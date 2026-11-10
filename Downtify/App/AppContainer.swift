@@ -8,6 +8,7 @@ struct AppContainer {
     let librarySync: LibrarySyncCoordinator
     let collections: LibraryCollectionsModel
     let libraryPresentation: LibraryPresentationModel
+    let catalogPresentation: CatalogPresentationModel
     let playback: PlaybackController
     let artwork: ArtworkLoader
     let offlineDownloads: OfflineDownloads
@@ -32,13 +33,17 @@ struct AppContainer {
         self.collections = collections
         let presentation = LibraryPresentationModel(repository: repository, sessionUpdates: sessionUpdates)
         libraryPresentation = presentation
+        let catalogPresentation = CatalogPresentationModel(api: CatalogAPI(), sessionUpdates: sessionUpdates)
+        self.catalogPresentation = catalogPresentation
+        catalogPresentation.start()
         librarySync = LibrarySyncCoordinator(
             repository: repository, events: LibraryWebSocket(api: api),
             sessionUpdates: sessionUpdates,
             verifySession: { try await connection.verifySession(expected: $0) },
             didUpdate: { await presentation.syncDidUpdate(for: $0) },
             didFail: { presentation.syncDidFail(for: $0, message: $1) },
-            didChangeCollections: { await collections.refresh(for: $0) }
+            didChangeCollections: { await collections.refresh(for: $0) },
+            didChangeMusicPolicy: { await catalogPresentation.refreshPolicy(for: $0) }
         )
         let playbackCache = PlaybackCache()
         let verifyPlaybackSession: (DeviceSession) async -> Void = {
