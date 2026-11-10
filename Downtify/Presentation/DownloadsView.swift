@@ -18,7 +18,7 @@ struct DownloadsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.large) {
+            VStack(alignment: .center, spacing: DowntifyStyle.Space.large) {
                 localSection
                 serverSection
             }

@@ -106,7 +106,7 @@ struct LibraryHomeView: View {
 
     private func browsePage<Content: View>(title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: tab == .library && category == .songs ? .leading : .center, spacing: DowntifyStyle.Space.regular) {
                 syncStatus
                 content()
             }
@@ -123,6 +123,7 @@ struct LibraryHomeView: View {
         }
         .navigationDestination(for: LibraryContext.self) { context in
             LibraryContextView(context: context, library: library, playback: playback,
+                               serverDownloads: serverDownloads,
                                onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
         }
     }
@@ -200,7 +201,7 @@ struct LibraryHomeView: View {
     }
 
     private func shelf(_ title: LocalizedStringKey, entries: [LibraryBrowseEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .center, spacing: 8) {
             Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             LibraryEntryList(entries: entries, grid: !dynamicTypeSize.isAccessibilitySize)
         }
@@ -247,8 +248,6 @@ struct LibraryHomeView: View {
     @ViewBuilder
     private var searchContent: some View {
         CatalogSearchView(catalog: catalogPresentation, library: library, playback: playback,
-                          onOpenAlbum: { album in openProviderURL(album.url) },
-                          onOpenArtist: { artist in openProviderURL(artist.url) },
                           onDownloadAlbum: { url in Task { await serverDownloads.requestAlbum(url: url) } },
                           albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
                           onDownload: { song in Task { await serverDownloads.request(song: song) } },
@@ -415,13 +414,14 @@ private struct LibraryEntryList: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 12)], spacing: 12) {
                 ForEach(entries) { entry in
                     NavigationLink(value: entry.context) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .center, spacing: 6) {
                             artwork(entry, size: 108)
                             Text(entry.title).font(.headline).lineLimit(2)
                             Text(subtitle(entry)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                             Spacer(minLength: 0)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .top)
                         .padding(10)
                         .contentShape(Rectangle())
                     }
@@ -432,9 +432,15 @@ private struct LibraryEntryList: View {
             LazyVStack(spacing: 0) {
                 ForEach(entries) { entry in
                     NavigationLink(value: entry.context) {
-                        DowntifyMediaRow(title: entry.title, subtitle: subtitle(entry)) {
+                        VStack(spacing: 6) {
                             artwork(entry, size: 54)
-                        } accessory: {
+                            Text(entry.title).font(.headline)
+                            Text(subtitle(entry)).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .trailing) {
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary).accessibilityHidden(true)
                         }
@@ -477,8 +483,10 @@ private struct LibraryContextView: View {
     let context: LibraryContext
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
     var onMoveToTrash: ((LibraryTrack) -> Void)? = nil
     @EnvironmentObject private var collections: LibraryCollectionsModel
+    @EnvironmentObject private var catalog: CatalogPresentationModel
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
     @State private var confirmingDownload = false
@@ -501,7 +509,7 @@ private struct LibraryContextView: View {
     var body: some View {
         let tracks = library.catalog.tracks(in: context, likedIDs: collections.likedIDs ?? [], playlist: playlist)
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: .center, spacing: DowntifyStyle.Space.regular) {
                 if let playlist, playlist.mine == false, let owner = playlist.owner, !owner.isEmpty {
                     Text("By \(owner)").foregroundStyle(.secondary)
                 }
@@ -522,6 +530,15 @@ private struct LibraryContextView: View {
                 status(tracks)
                 if case .artist(let id) = context {
                     let albums = library.catalog.albums(for: id)
+                    if catalog.externalCatalogAvailable, let artist = library.catalog.artistsByID[id] {
+                        NavigationLink {
+                            ArtistCatalogAlbumsView(artist: artist.title, library: library,
+                                                    serverDownloads: serverDownloads, catalog: catalog)
+                        } label: {
+                            Label("Find more albums", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.bordered)
+                    }
                     if !albums.isEmpty {
                         Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                         LibraryEntryList(entries: albums, grid: false)
@@ -529,6 +546,7 @@ private struct LibraryContextView: View {
                 }
                 if !tracks.isEmpty {
                     Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     LibraryTrackList(tracks: tracks, context: context, playback: playback,
                                      onMoveToTrash: onMoveToTrash)
                 } else if let error = collections.actionError {
@@ -577,7 +595,6 @@ private struct LibraryContextView: View {
                 }
                 .accessibilityLabel("Shuffle songs")
             }
-            Spacer()
             if let playlist, let favorite = playlist.favorite {
                 Button {
                     Task { await collections.toggleFavorite(playlist.name) }
@@ -625,6 +642,148 @@ private struct LibraryContextView: View {
             if tracks.isEmpty && (collectionState == nil || collectionState == .ready || hasCache) {
                 ContentUnavailableView("No songs available", systemImage: "music.note")
             }
+        }
+    }
+}
+
+
+/// Catalog browsing is scoped to this page so it does not replace the Search tab's results.
+private struct ArtistCatalogAlbumsView: View {
+    let artist: String
+    @ObservedObject var library: LibraryPresentationModel
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
+    @ObservedObject var catalog: CatalogPresentationModel
+    @State private var albums: [CatalogAlbum] = []
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if isLoading { ProgressView("Loading albums…") }
+            if let error { Text(error).foregroundStyle(.secondary) }
+            if !isLoading && error == nil && albums.isEmpty {
+                Text("No albums found.").foregroundStyle(.secondary)
+            }
+            ForEach(albums) { album in
+                NavigationLink {
+                    ArtistCatalogAlbumView(album: album, library: library, serverDownloads: serverDownloads, catalog: catalog)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(album.title)
+                        Text(album.artist).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle(artist)
+        .task(id: catalog.session) {
+            albums = []
+            error = nil
+            guard let session = catalog.session, catalog.externalCatalogAvailable else {
+                isLoading = false
+                error = String(localized: "Catalog is unavailable.")
+                return
+            }
+            isLoading = true
+            do {
+                let results = try await CatalogAPI().searchAlbums(query: artist, limit: 50, session: session)
+                guard !Task.isCancelled else { return }
+                albums = results.filter { $0.artist.localizedCaseInsensitiveCompare(artist) == .orderedSame }
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
+            isLoading = false
+        }
+    }
+}
+
+private struct ArtistCatalogAlbumView: View {
+    let album: CatalogAlbum
+    @ObservedObject var library: LibraryPresentationModel
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
+    @ObservedObject var catalog: CatalogPresentationModel
+    @State private var songs: [CatalogSong] = []
+    @State private var isLoading = true
+    @State private var error: String?
+
+    private func isInLibrary(_ song: CatalogSong) -> Bool {
+        library.tracks.contains {
+            $0.title.localizedCaseInsensitiveCompare(song.title) == .orderedSame &&
+            $0.album.localizedCaseInsensitiveCompare(album.title) == .orderedSame &&
+            ($0.albumArtist.isEmpty ? $0.artist : $0.albumArtist).localizedCaseInsensitiveCompare(album.artist) == .orderedSame
+        }
+    }
+
+    private func canRequest(_ song: CatalogSong) -> Bool {
+        guard catalog.externalCatalogAvailable, !isInLibrary(song), song.source != "library" else { return false }
+        switch serverDownloads.actionState(for: song) {
+        case .idle, .failed: return true
+        default: return false
+        }
+    }
+
+    private func status(_ song: CatalogSong) -> String {
+        if isInLibrary(song) || song.source == "library" { return String(localized: "In your library") }
+        switch serverDownloads.actionState(for: song) {
+        case .idle: return String(localized: "Add to library")
+        case .submitting: return String(localized: "Requesting…")
+        case .queued, .accepted: return String(localized: "Queued")
+        case .partiallyAccepted: return String(localized: "Partially queued")
+        case .outcomeUnknown: return String(localized: "Check queue")
+        case .failed: return String(localized: "Retry")
+        }
+    }
+
+    var body: some View {
+        List {
+            if isLoading { ProgressView("Loading album…") }
+            if let error { Text(error).foregroundStyle(.secondary) }
+            if !isLoading && error == nil && songs.isEmpty { Text("No songs found.").foregroundStyle(.secondary) }
+            let missing = songs.filter(canRequest)
+            if !missing.isEmpty {
+                Button("Add missing songs to library", systemImage: "plus.circle") {
+                    Task { await serverDownloads.requestBatch(songs: missing) }
+                }
+            }
+            ForEach(songs) { song in
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text(song.title)
+                        Spacer()
+                        Button(status(song)) { Task { await serverDownloads.request(song: song) } }
+                            .disabled(!canRequest(song))
+                    }
+                    if case .failed(let message) = serverDownloads.actionState(for: song) {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if !songs.isEmpty {
+                Text("Songs are added after the server downloads them and the library syncs.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(album.title)
+        .task(id: catalog.session) {
+            songs = []
+            error = nil
+            guard let session = catalog.session, catalog.externalCatalogAvailable else {
+                isLoading = false
+                error = String(localized: "Catalog is unavailable.")
+                return
+            }
+            isLoading = true
+            do {
+                let id = album.deezerAlbumID ?? (album.source.lowercased() == "deezer" ? album.albumID : nil)
+                if let id, !id.isEmpty, id.utf8.allSatisfy({ (48...57).contains($0) }), catalog.supportsDiscover == true {
+                    songs = try await CatalogAPI().finderAlbum(id: id, session: session).tracks
+                } else if let url = album.url {
+                    songs = try await CatalogAPI().resolve(url: url, session: session).tracks
+                } else {
+                    error = String(localized: "Album details are unavailable.")
+                }
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
+            isLoading = false
         }
     }
 }
