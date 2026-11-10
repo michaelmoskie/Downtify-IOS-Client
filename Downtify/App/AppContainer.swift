@@ -36,15 +36,6 @@ struct AppContainer {
         let catalogPresentation = CatalogPresentationModel(api: CatalogAPI(), sessionUpdates: sessionUpdates)
         self.catalogPresentation = catalogPresentation
         catalogPresentation.start()
-        librarySync = LibrarySyncCoordinator(
-            repository: repository, events: LibraryWebSocket(api: api),
-            sessionUpdates: sessionUpdates,
-            verifySession: { try await connection.verifySession(expected: $0) },
-            didUpdate: { await presentation.syncDidUpdate(for: $0) },
-            didFail: { presentation.syncDidFail(for: $0, message: $1) },
-            didChangeCollections: { await collections.refresh(for: $0) },
-            didChangeMusicPolicy: { await catalogPresentation.refreshPolicy(for: $0) }
-        )
         let playbackCache = PlaybackCache()
         let verifyPlaybackSession: (DeviceSession) async -> Void = {
             _ = try? await connection.verifySession(expected: $0)
@@ -52,12 +43,34 @@ struct AppContainer {
         offlineDownloads = .live
         offlineDownloads.verifySession = verifyPlaybackSession
         serverDownloadQueue = ServerDownloadQueue(verifySession: verifyPlaybackSession)
-        playback = PlaybackController(
+        let controller = PlaybackController(
             engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
             store: PlaybackStateStore(), networkMonitor: SystemPlaybackNetworkMonitor(),
             cache: playbackCache, reporting: PlaybackReporting(verifySession: verifyPlaybackSession),
             verifySession: verifyPlaybackSession
         )
+        playback = controller
+        Task { @MainActor in
+            for await state in catalogPresentation.$policyState.values {
+                guard state == .ready, let only = catalogPresentation.isLibraryOnly else { continue }
+                controller.applyLibraryOnlyPolicy(only, tracks: presentation.tracks)
+            }
+        }
+        librarySync = LibrarySyncCoordinator(
+            repository: repository, events: LibraryWebSocket(api: api),
+            sessionUpdates: sessionUpdates,
+            verifySession: { try await connection.verifySession(expected: $0) },
+            didUpdate: { await presentation.syncDidUpdate(for: $0) },
+            didFail: { presentation.syncDidFail(for: $0, message: $1) },
+            didChangeCollections: { await collections.refresh(for: $0) },
+            didChangeMusicPolicy: { [weak catalogPresentation] session in
+                await catalogPresentation?.refreshPolicy(for: session)
+                guard catalogPresentation?.policyState == .ready,
+                      let only = catalogPresentation?.isLibraryOnly else { return }
+                controller.applyLibraryOnlyPolicy(only, tracks: presentation.tracks)
+            }
+        )
+
     }
 }

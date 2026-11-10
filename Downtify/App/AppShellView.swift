@@ -41,6 +41,37 @@ extension LibraryTrack {
     }
 }
 
+private extension PlaybackItem {
+    var displayTitle: String { title.isEmpty ? String(localized: "Unknown title") : title }
+    var displayArtist: String { artist.isEmpty ? String(localized: "Unknown artist") : artist }
+    var accessibleMetadata: String {
+        album.isEmpty ? String(localized: "\(displayTitle), \(displayArtist)")
+            : String(localized: "\(displayTitle), \(displayArtist), \(album)")
+    }
+}
+
+private struct PlaybackItemArtwork: View {
+    let item: PlaybackItem?
+    let size: CGFloat
+
+    var body: some View {
+        if let track = item?.libraryTrack {
+            TrackArtwork(track: track, size: size)
+        } else if let url = item?.catalogSong?.coverURL.flatMap(URL.init(string:)),
+                  url.scheme?.lowercased() == "https" {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                ArtworkPlaceholder(size: size)
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
+        } else {
+            ArtworkPlaceholder(size: size)
+        }
+    }
+}
+
 struct TrackRow: View {
     let track: LibraryTrack
 
@@ -91,7 +122,7 @@ private struct MiniPlayerView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var track: LibraryTrack? { playback.queue.current?.track }
+    private var item: PlaybackItem? { playback.queue.current?.item }
     private var isActive: Bool { playback.phase == .playing || playback.phase == .buffering || playback.phase == .loading }
 
     var body: some View {
@@ -108,16 +139,16 @@ private struct MiniPlayerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Now playing, \(podcast.episode.title), \(podcast.show.name)")
                 .accessibilityHint("Open Now Playing")
-            } else if let track {
+            } else if let item {
                 Button(action: open) {
-                    DowntifyMediaRow(title: track.displayTitle, subtitle: track.displayArtist, accessibilityLineLimit: 2) {
-                        TrackArtwork(track: track, size: 44)
+                    DowntifyMediaRow(title: item.displayTitle, subtitle: item.displayArtist, accessibilityLineLimit: 2) {
+                        PlaybackItemArtwork(item: item, size: 44)
                     } accessory: {
                         EmptyView()
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Now playing, \(track.displayTitle) by \(track.displayArtist)")
+                .accessibilityLabel("Now playing, \(item.displayTitle) by \(item.displayArtist)")
                 .accessibilityHint("Open Now Playing")
             }
             HStack(spacing: 4) {
@@ -170,7 +201,8 @@ private struct NowPlayingView: View {
     @State private var lyricsError = false
     @State private var lyricOffset: Double = 0
 
-    private var track: LibraryTrack? { playback.queue.current?.track }
+    private var item: PlaybackItem? { playback.queue.current?.item }
+    private var track: LibraryTrack? { item?.libraryTrack }
     private var activelyPlaying: Bool { playback.phase == .playing || playback.phase == .buffering || playback.phase == .loading }
 
     private var usesWideLayout: Bool {
@@ -188,7 +220,7 @@ private struct NowPlayingView: View {
                         if let podcast = playback.podcast {
                             PodcastArtwork(show: podcast.show, size: artworkSize)
                         } else {
-                            TrackArtwork(track: track, size: artworkSize)
+                            PlaybackItemArtwork(item: item, size: artworkSize)
                         }
                     }
                     .accessibilityHidden(true)
@@ -202,14 +234,14 @@ private struct NowPlayingView: View {
                         transportControls
                         if playback.podcast == nil {
                             queueControls
-                            lyricsSection
+                            if track != nil { lyricsSection }
                         } else {
                             if playback.podcastProgressSaveFailed {
                                 Text("Could not save playback progress to the server.")
                                     .font(.footnote)
                                     .foregroundStyle(DowntifyStyle.error)
                             }
-                            if track != nil {
+                            if item != nil {
                                 Button("Back to music", systemImage: "music.note") { playback.returnToMusic() }
                             }
                         }
@@ -239,14 +271,14 @@ private struct NowPlayingView: View {
 
     private var trackMetadata: some View {
         VStack(spacing: 5) {
-            Text(playback.podcast?.episode.title ?? track?.displayTitle ?? String(localized: "Unknown title"))
+            Text(playback.podcast?.episode.title ?? item?.displayTitle ?? String(localized: "Unknown title"))
                 .font(.title2.weight(.bold))
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .accessibilityAddTraits(.isHeader)
-            Text(playback.podcast?.show.name ?? track?.displayArtist ?? String(localized: "Unknown artist"))
+            Text(playback.podcast?.show.name ?? item?.displayArtist ?? String(localized: "Unknown artist"))
                 .font(.title3)
                 .foregroundStyle(DowntifyStyle.secondaryText)
-            if let album = playback.podcast == nil ? track?.album : playback.podcast?.show.author, !album.isEmpty {
+            if let album = playback.podcast == nil ? item?.album : playback.podcast?.show.author, !album.isEmpty {
                 Text(album)
                     .font(.subheadline)
                     .foregroundStyle(DowntifyStyle.secondaryText)
@@ -270,7 +302,7 @@ private struct NowPlayingView: View {
                         .downtifyControlTarget()
                 }
                 .accessibilityLabel("Previous track")
-                .disabled(track == nil)
+                .disabled(item == nil)
             }
             if case .failed = playback.phase {
                 Button { playback.play() } label: {
@@ -284,7 +316,7 @@ private struct NowPlayingView: View {
                         .font(.system(size: 56)).downtifyControlTarget()
                 }
                 .accessibilityLabel(activelyPlaying ? "Pause" : "Play")
-                .disabled(track == nil && playback.podcast == nil)
+                .disabled(item == nil && playback.podcast == nil)
             }
             if playback.podcast != nil {
                 Button { playback.seek(to: playback.position + 30) } label: {
@@ -545,8 +577,8 @@ private struct QueueEntryRow: View {
     var body: some View {
         HStack(spacing: DowntifyStyle.Space.small) {
             Button { playback.select(entry.id) } label: {
-                DowntifyMediaRow(title: entry.track.displayTitle, subtitle: entry.track.displayArtist) {
-                    TrackArtwork(track: entry.track, size: 44)
+                DowntifyMediaRow(title: entry.item.displayTitle, subtitle: entry.item.displayArtist) {
+                    PlaybackItemArtwork(item: entry.item, size: 44)
                 } accessory: {
                     if isCurrent {
                         Label("Current track", systemImage: "speaker.wave.2.fill")
@@ -556,7 +588,7 @@ private struct QueueEntryRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(entry.track.accessibleMetadata))
+            .accessibilityLabel(Text(entry.item.accessibleMetadata))
             .accessibilityAddTraits(isCurrent ? .isSelected : [])
             .accessibilityHint(isCurrent ? "Current queue entry" : "Play this queue entry")
 
@@ -566,7 +598,7 @@ private struct QueueEntryRow: View {
                     .downtifyControlTarget()
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove \(entry.track.displayTitle) from queue")
+            .accessibilityLabel("Remove \(entry.item.displayTitle) from queue")
         }
         .padding(.vertical, 3)
     }
