@@ -3,16 +3,16 @@ import SwiftUI
 struct DownloadsView: View {
     let connection: ConnectionService
     let queue: ServerDownloadQueue
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
     @ObservedObject var playback: PlaybackController
-    @ObservedObject var library: LibraryPresentationModel
     @EnvironmentObject private var downloads: OfflineDownloads
+    @EnvironmentObject private var catalog: CatalogPresentationModel
     @Environment(\.downtifyPalette) private var palette
     @State private var session: DeviceSession?
-    @State private var jobs: [ServerDownloadQueue.Job] = []
-    @State private var queueStatus: ServerDownloadQueue.Status?
     @State private var link = ""
-    @State private var loadingQueue = false
-    @State private var queueError: LocalizedStringKey?
+    @State private var submittingLink = false
+    @State private var catalogQuery = ""
+    @State private var selectedCatalogSongs: Set<CatalogResultID> = []
     @State private var localError: LocalizedStringKey?
     @State private var requestMessage: LocalizedStringKey?
 
@@ -29,7 +29,7 @@ struct DownloadsView: View {
         .background(palette.background.ignoresSafeArea())
         .navigationTitle("Downloads")
         .toolbarBackground(palette.background, for: .navigationBar)
-        .task { await load() }
+        .task { serverDownloads.start(); await load() }
         .refreshable { await refreshQueue() }
         .alert("Download request", isPresented: Binding(get: { requestMessage != nil }, set: { if !$0 { requestMessage = nil } })) {
             Button("OK", role: .cancel) { requestMessage = nil }
@@ -118,22 +118,23 @@ struct DownloadsView: View {
                 .font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
             Text("These jobs run on the server. Completed items become available through library sync; they are not saved on this device.")
                 .font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
-            if let queueStatus {
+            catalogDownloadActions
+            if let queueStatus = serverDownloads.queueStatus {
                 Text("Queue \(queueStatus.paused ? "paused" : queueStatus.state) · \(queueStatus.active) active")
                     .font(.subheadline).accessibilityLabel("Server queue \(queueStatus.state), \(queueStatus.active) active jobs")
             }
-            if let queueError {
+            if let queueError = serverDownloads.queueError {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(queueError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(DowntifyStyle.error)
                     Button("Retry server queue", systemImage: "arrow.clockwise") { Task { await refreshQueue() } }
                 }.font(.footnote)
-            } else if jobs.isEmpty && !loadingQueue {
+            } else if serverDownloads.jobs.isEmpty && !serverDownloads.isRefreshing {
                 ContentUnavailableView("Server queue is empty", systemImage: "tray",
                                        description: Text("Add a supported link to request a server download."))
                     .frame(maxWidth: .infinity).padding(.vertical, 4)
             }
-            if loadingQueue { ProgressView("Loading server queue…") }
-            ForEach(Array(jobs.enumerated()), id: \.offset) { _, job in
+            if serverDownloads.isRefreshing { ProgressView("Loading server queue…") }
+            ForEach(serverDownloads.jobs) { job in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(job.song.title ?? job.filename ?? "Server download")
                         .font(.headline).lineLimit(2)
@@ -165,7 +166,7 @@ struct DownloadsView: View {
                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .accessibilityLabel("Link for server download")
                 Button("Request", systemImage: "arrow.down.to.line") { Task { await submitLink() } }
-                    .disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loadingQueue)
+                    .disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || serverDownloads.isRefreshing || submittingLink)
                     .frame(minHeight: 44)
             }
             .padding(.top, 4)
@@ -174,6 +175,150 @@ struct DownloadsView: View {
         }
         .padding(16)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var catalogDownloadActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Find music to download to the server")
+                .font(.headline)
+            HStack(spacing: 8) {
+                TextField("Song or album", text: $catalogQuery)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .accessibilityLabel("Search catalog for server downloads")
+                Button("Search", systemImage: "magnifyingglass") {
+                    selectedCatalogSongs.removeAll()
+                    catalog.search(catalogQuery)
+                }
+                .disabled(catalogQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || catalog.isLibraryOnly != false)
+                .frame(minHeight: 44)
+            }
+            if catalog.isLibraryOnly == true {
+                Text("Server downloads are unavailable in library-only mode.")
+                    .font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
+            } else {
+                let songs = catalogSongs
+                if !songs.isEmpty {
+                    ForEach(songs) { song in
+                        HStack(spacing: 8) {
+                            Button {
+                                if selectedCatalogSongs.contains(song.id) { selectedCatalogSongs.remove(song.id) }
+                                else { selectedCatalogSongs.insert(song.id) }
+                            } label: {
+                                Image(systemName: selectedCatalogSongs.contains(song.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                            }
+                            .accessibilityLabel(selectedCatalogSongs.contains(song.id) ? "Deselect \(song.title)" : "Select \(song.title)")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(song.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                                Text(song.artists.joined(separator: ", ")).font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                            }
+                            Spacer(minLength: 4)
+                            Button(songActionTitle(for: song), systemImage: "arrow.down.to.line") {
+                                Task { await serverDownloads.request(song: song) }
+                            }
+                            .disabled(catalog.isLibraryOnly != false || !canRequest(serverDownloads.actionState(for: song)))
+                            .accessibilityLabel("Download \(song.title) to server")
+                        }
+                        .padding(.vertical, 3)
+                        if case .failed(let message) = serverDownloads.actionState(for: song) {
+                            Text(message).font(.caption).foregroundStyle(DowntifyStyle.error)
+                        }
+                    }
+                    if selectedCatalogSongs.count > 1 {
+                        Button("Download selected (\(selectedCatalogSongs.count))", systemImage: "arrow.down.to.line.compact") {
+                            let selected = songs.filter { selectedCatalogSongs.contains($0.id) }
+                            Task { await serverDownloads.requestBatch(songs: selected) }
+                        }
+                        .disabled(catalog.isLibraryOnly != false || !songs.filter { selectedCatalogSongs.contains($0.id) }
+                            .allSatisfy { canRequest(serverDownloads.actionState(for: $0)) })
+                    }
+                }
+                ForEach(catalogAlbums) { album in
+                    if let url = album.url, isSupportedAlbumURL(url) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(album.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                                Text(album.artist).font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                            }
+                            Spacer()
+                            Button(albumActionTitle(for: url), systemImage: "arrow.down.to.line") {
+                                Task { await serverDownloads.requestAlbum(url: url) }
+                            }
+                            .disabled(catalog.isLibraryOnly != false || !canRequest(serverDownloads.actionState(forAlbumURL: url)))
+                            .accessibilityLabel("Download album \(album.title) to server")
+                        }
+                        if case .failed(let message) = serverDownloads.actionState(forAlbumURL: url) {
+                            Text(message).font(.caption).foregroundStyle(DowntifyStyle.error)
+                        }
+                    }
+                }
+                if songs.isEmpty, catalogAlbums.isEmpty, !catalogQuery.isEmpty {
+                    switch catalog.searchSongsState {
+                    case .loading: ProgressView("Searching catalog…")
+                    case .failed(let message), .unavailable(let message): Text(message).font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
+                    default: EmptyView()
+                    }
+                }
+            }
+            if !selectedCatalogSongs.isEmpty {
+                Button("Clear selection") { selectedCatalogSongs.removeAll() }
+                    .font(.caption)
+            }
+        }
+        .padding(12)
+        .background(palette.background.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var catalogSongs: [CatalogSong] {
+        switch catalog.searchSongsState {
+        case .loaded(let songs), .partial(let songs, _): songs
+        default: []
+        }
+    }
+
+    private var catalogAlbums: [CatalogAlbum] {
+        switch catalog.searchAlbumsState {
+        case .loaded(let albums), .partial(let albums, _): albums
+        default: []
+        }
+    }
+
+    private func canRequest(_ state: ServerDownloadActionState) -> Bool {
+        switch state {
+        case .idle, .failed: true
+        case .submitting, .queued, .accepted, .partiallyAccepted, .outcomeUnknown: false
+        }
+    }
+
+    private func songActionTitle(for song: CatalogSong) -> String {
+        switch serverDownloads.actionState(for: song) {
+        case .submitting: "Requesting…"
+        case .queued: "Queued"
+        case .accepted: "Requested"
+        case .partiallyAccepted: "Partially queued"
+        case .outcomeUnknown: "Check queue"
+        case .failed: "Retry"
+        case .idle: "Download to server"
+        }
+    }
+
+    private func albumActionTitle(for url: String) -> String {
+        switch serverDownloads.actionState(forAlbumURL: url) {
+        case .submitting: "Requesting…"
+        case .accepted: "Finished"
+        case .partiallyAccepted(let successful, let expected): "\(successful) of \(expected) downloaded"
+        case .outcomeUnknown: "Check queue"
+        case .failed: "Retry"
+        case .queued: "Queued"
+        case .idle: "Download to server"
+        }
+    }
+
+    private func isSupportedAlbumURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value), components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "music.youtube.com" else { return false }
+        return components.path.range(of: #"^/browse/MPREb_[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil
+            || components.queryItems?.contains(where: { $0.name == "list" && $0.value?.range(of: #"^OLAK5uy_[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil }) == true
     }
 
     private func localStatus(_ item: OfflineDownload) -> LocalizedStringKey {
@@ -197,26 +342,14 @@ struct DownloadsView: View {
     }
 
     @MainActor private func refreshQueue() async {
-        guard let session = await activeSession() else {
-            queueError = "Reconnect to view the server queue."
-            return
-        }
-        loadingQueue = true
-        defer { loadingQueue = false }
-        do {
-            async let fetchedJobs = queue.jobs(session: session)
-            async let fetchedStatus = queue.status(session: session)
-            let result = try await (fetchedJobs, fetchedStatus)
-            guard self.session == session else { return }
-            jobs = result.0
-            queueStatus = result.1
-            queueError = nil
-        } catch {
-            queueError = "Could not load the server queue. Check the connection and try again."
-        }
+        guard await activeSession() != nil else { return }
+        await serverDownloads.refreshQueue()
     }
 
     @MainActor private func submitLink() async {
+        guard !submittingLink else { return }
+        submittingLink = true
+        defer { submittingLink = false }
         guard let session = await activeSession() else {
             requestMessage = "Reconnect to request a server download."
             return
@@ -230,7 +363,6 @@ struct DownloadsView: View {
             _ = try await queue.requestTrack(link: url, session: session)
             link = ""
             await refreshQueue()
-            await library.refresh()
             requestMessage = "Server download requested. The item will appear after library sync."
         } catch {
             requestMessage = "Could not request this server download. Check the link and connection."

@@ -35,6 +35,8 @@ final class CatalogPresentationModel: ObservableObject {
     @Published private(set) var urlResolutionState: CatalogLoadState<URLResolution> = .idle
     @Published private(set) var finderSearchState: CatalogLoadState<CatalogSearchResults> = .idle
     @Published private(set) var finderArtistState: CatalogLoadState<CatalogFinderArtist> = .idle
+    @Published private(set) var finderArtistSongsState: CatalogLoadState<[CatalogSong]> = .idle
+    @Published private(set) var finderArtistAlbumsState: CatalogLoadState<[CatalogAlbum]> = .idle
     @Published private(set) var finderAlbumState: CatalogLoadState<CatalogFinderAlbum> = .idle
     @Published private(set) var chartsState: CatalogLoadState<CatalogCharts> = .idle
     @Published private(set) var similarState: CatalogLoadState<CatalogSimilarResults> = .idle
@@ -164,18 +166,44 @@ final class CatalogPresentationModel: ObservableObject {
         }
     }
 
-    func loadFinderArtist(id: String, language: String = "en") {
+    func clearFinderSearch() {
+        cancelRequests(withPrefix: "finder_")
+        finderSearchState = .idle
+        finderArtistState = .idle
+        finderArtistSongsState = .idle
+        finderArtistAlbumsState = .idle
+        finderAlbumState = .idle
+    }
+
+    func loadFinderArtist(id: String, name: String? = nil, language: String = "en") {
         guard let session else {
             finderArtistState = .unavailable(message: "Connect to a server to browse this artist.")
+            finderArtistSongsState = .unavailable(message: "Connect to a server to browse this artist.")
+            finderArtistAlbumsState = .unavailable(message: "Connect to a server to browse this artist.")
             return
         }
         guard providerFinderDetailsAvailable else {
             finderArtistState = .unavailable(message: "Provider artist details are unavailable in library-only mode.")
+            finderArtistSongsState = .unavailable(message: "Provider artist tracks are unavailable in library-only mode.")
+            finderArtistAlbumsState = .unavailable(message: "Provider artist albums are unavailable in library-only mode.")
             return
         }
+        cancelRequests(withPrefix: "finder_artist")
+        cancelRequests(withPrefix: "finder_album")
+        finderAlbumState = .idle
         let api = self.api
         startRequest("finder_artist", session: session, operation: { try await api.finderArtist(id: id, language: language, session: session) },
                      isEmpty: { $0.artist.name.isEmpty }) { self.finderArtistState = $0 }
+        finderArtistSongsState = .idle
+        finderArtistAlbumsState = .idle
+        if let name {
+            startRequest("finder_artist_songs", session: session,
+                         operation: { try await api.finderArtistSongs(id: id, name: name, session: session).tracks },
+                         isEmpty: \.isEmpty) { self.finderArtistSongsState = $0 }
+        }
+        startRequest("finder_artist_albums", session: session,
+                     operation: { try await api.finderArtistAlbums(id: id, session: session) },
+                     isEmpty: \.isEmpty) { self.finderArtistAlbumsState = $0 }
     }
 
     func loadFinderAlbum(id: String) {
@@ -187,6 +215,11 @@ final class CatalogPresentationModel: ObservableObject {
             finderAlbumState = .unavailable(message: "Provider album details are unavailable in library-only mode.")
             return
         }
+        cancelRequests(withPrefix: "finder_artist")
+        cancelRequests(withPrefix: "finder_album")
+        finderArtistState = .idle
+        finderArtistSongsState = .idle
+        finderArtistAlbumsState = .idle
         let api = self.api
         startRequest("finder_album", session: session, operation: { try await api.finderAlbum(id: id, session: session) },
                      isEmpty: { $0.tracks.isEmpty }) { self.finderAlbumState = $0 }
@@ -384,6 +417,8 @@ final class CatalogPresentationModel: ObservableObject {
         urlResolutionState = .idle
         finderSearchState = .idle
         finderArtistState = .idle
+        finderArtistSongsState = .idle
+        finderArtistAlbumsState = .idle
         finderAlbumState = .idle
         chartsState = .idle
         similarState = .idle

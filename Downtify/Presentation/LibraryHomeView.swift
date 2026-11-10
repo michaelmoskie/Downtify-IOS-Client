@@ -7,8 +7,11 @@ struct LibraryHomeView: View {
     @Binding var appearance: DowntifyAppearance
     let connection: ConnectionService
     let serverDownloadQueue: ServerDownloadQueue
+    let serverDownloads: ServerDownloadPresentationModel
     let signOut: @MainActor () async throws -> Void
     @EnvironmentObject private var collections: LibraryCollectionsModel
+    @EnvironmentObject private var catalogPresentation: CatalogPresentationModel
+    @Environment(\.openURL) private var openURL
     @Environment(\.downtifyPalette) private var palette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("library.sort") private var sort = LibrarySort.recentlyAdded
@@ -46,7 +49,6 @@ struct LibraryHomeView: View {
 
             NavigationStack {
                 browsePage(title: "Search") { searchContent }
-                    .searchable(text: $searchText, prompt: "Search your library")
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(Tab.search)
@@ -57,7 +59,8 @@ struct LibraryHomeView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
 
-            DownloadsView(connection: connection, queue: serverDownloadQueue, playback: playback, library: library)
+            DownloadsView(connection: connection, queue: serverDownloadQueue, serverDownloads: serverDownloads,
+                          playback: playback)
                 .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
                 .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }.tag(Tab.downloads)
 
@@ -142,6 +145,11 @@ struct LibraryHomeView: View {
     }
 
     private var query: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func openProviderURL(_ value: String?) {
+        guard let value, let url = URL(string: value), url.scheme?.lowercased() == "https" else { return }
+        openURL(url)
+    }
     private var likedEntry: LibraryBrowseEntry {
         LibraryBrowseEntry(id: "", context: .liked, title: String(localized: "Liked songs"), artist: "",
                            added: 0, count: collections.likedIDs?.count ?? 0,
@@ -238,50 +246,49 @@ struct LibraryHomeView: View {
 
     @ViewBuilder
     private var searchContent: some View {
-        if query.isEmpty {
-            DowntifyUnavailableView(title: "Search your library", symbol: "magnifyingglass",
-                                    message: Text("Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract."))
-        } else if library.tracks.isEmpty {
-            emptyTracks
-        } else {
-            let matchingTracks = LibraryTrackOrdering.matching(library.tracks, query: query)
-            let albums = matching(Array(library.catalog.albumsByID.values))
-            let artists = matching(Array(library.catalog.artistsByID.values))
-            if matchingTracks.isEmpty && albums.isEmpty && artists.isEmpty {
-                ContentUnavailableView.search(text: searchText)
-            } else {
-                if !matchingTracks.isEmpty {
-                    Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryTrackList(tracks: matchingTracks, context: nil, playback: playback,
-                                     onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
-                }
-                if !albums.isEmpty {
-                    Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryEntryList(entries: sort.ordered(albums, descending: descending), grid: false)
-                }
-                if !artists.isEmpty {
-                    Text("Artists").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryEntryList(entries: sort.ordered(artists, descending: descending), grid: false)
-                }
-            }
-        }
+        CatalogSearchView(catalog: catalogPresentation, library: library, playback: playback,
+                          onOpenAlbum: { album in openProviderURL(album.url) },
+                          onOpenArtist: { artist in openProviderURL(artist.url) },
+                          onDownloadAlbum: { url in Task { await serverDownloads.requestAlbum(url: url) } },
+                          albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
+                          onDownload: { song in Task { await serverDownloads.request(song: song) } },
+                          downloadState: { serverDownloads.actionState(for: $0) })
     }
 
     private var discoveryContent: some View {
-        VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
-            Label("Catalog discovery is unavailable", systemImage: "sparkles")
-                .font(.title3.bold())
-            Text("The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search.")
-                .foregroundStyle(.secondary)
-            Divider()
-            Label("Similar tracks are unavailable", systemImage: "waveform.path")
-                .font(.headline)
-            Text("Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract.")
-                .foregroundStyle(.secondary)
+        CatalogDiscoverView(
+            catalog: catalogPresentation,
+            libraryTracks: library.tracks,
+            libraryArtists: discoveryLibraryArtists,
+            libraryAlbums: Array(library.catalog.albumsByID.values).map {
+                CatalogLibraryAlbum(artist: $0.artist, title: $0.title)
+            },
+            playlistNames: (collections.playlists ?? []).filter { $0.liked != true }.map(\.name),
+            playlistIDs: (collections.playlists ?? []).filter { $0.liked != true }.map(\.id),
+            shownArtists: [],
+            onPlay: { song in playCatalogSong(song) },
+            onDownload: { song in Task { await serverDownloads.request(song: song) } },
+            onDownloadAlbum: { url in Task { await serverDownloads.requestAlbum(url: url) } },
+            downloadState: { serverDownloads.actionState(for: $0) },
+            albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
+            onOpenURL: { openProviderURL($0.absoluteString) }
+        )
+    }
+
+    private var discoveryLibraryArtists: [CatalogLibraryArtist] {
+        Dictionary(grouping: library.tracks, by: LibraryCatalog.artistName(_:)).map { name, tracks in
+            CatalogLibraryArtist(name: name, tracks: tracks.count,
+                                 liked: tracks.filter { collections.likedSet.contains($0.id) }.count)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func playCatalogSong(_ song: CatalogSong) {
+        if song.source == "library" {
+            guard let track = song.libraryTrack(in: library.tracks) else { return }
+            playback.replaceQueue([.library(track)])
+        } else {
+            playback.replaceQueue([.catalog(song)])
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(palette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var sortMenu: some View {

@@ -13,6 +13,7 @@ struct AppContainer {
     let artwork: ArtworkLoader
     let offlineDownloads: OfflineDownloads
     let serverDownloadQueue: ServerDownloadQueue
+    let serverDownloads: ServerDownloadPresentationModel
 
     init(displayName: String = "Downtify") {
         self.displayName = displayName
@@ -42,7 +43,11 @@ struct AppContainer {
         }
         offlineDownloads = .live
         offlineDownloads.verifySession = verifyPlaybackSession
-        serverDownloadQueue = ServerDownloadQueue(verifySession: verifyPlaybackSession)
+        let serverDownloadQueue = ServerDownloadQueue(verifySession: verifyPlaybackSession)
+        self.serverDownloadQueue = serverDownloadQueue
+        let serverDownloads = ServerDownloadPresentationModel(queue: serverDownloadQueue, sessionUpdates: sessionUpdates)
+        self.serverDownloads = serverDownloads
+        serverDownloads.start()
         let controller = PlaybackController(
             engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
@@ -69,6 +74,10 @@ struct AppContainer {
                 guard catalogPresentation?.policyState == .ready,
                       let only = catalogPresentation?.isLibraryOnly else { return }
                 controller.applyLibraryOnlyPolicy(only, tracks: presentation.tracks)
+            },
+            didChangeDownloadQueue: { [weak serverDownloads] session in
+                guard serverDownloads?.session == session else { return }
+                await serverDownloads?.queueDidChange()
             }
         )
 

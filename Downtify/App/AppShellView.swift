@@ -6,6 +6,7 @@ struct AppShellView: View {
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
     let serverDownloadQueue: ServerDownloadQueue
+    let serverDownloads: ServerDownloadPresentationModel
     @AppStorage(DowntifyAppearance.storageKey) private var appearance = DowntifyAppearance.dark
     @AppStorage("downtify.language") private var language = "system"
 
@@ -23,6 +24,7 @@ struct AppShellView: View {
             case let .library(server):
                 LibraryHomeView(server: server, library: library, playback: playback, appearance: $appearance,
                                 connection: presentation.connectionService, serverDownloadQueue: serverDownloadQueue,
+                                serverDownloads: serverDownloads,
                                 signOut: { try await presentation.connectionService.signOut() })
             }
         }
