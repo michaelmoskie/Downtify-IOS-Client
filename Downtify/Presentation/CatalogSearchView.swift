@@ -1,27 +1,26 @@
 import SwiftUI
 
-/// Search surface for the synced library and the server catalog. Provider navigation and
-/// server-side download submission are injected so this view never treats provider IDs as
-/// library IDs and can be wired to the app's existing coordinators.
+/// Search surface for the synced library and the server catalog.
 struct CatalogSearchView: View {
     @ObservedObject var catalog: CatalogPresentationModel
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
-    var onOpenAlbum: (CatalogAlbum) -> Void = { _ in }
-    var onOpenArtist: (CatalogArtist) -> Void = { _ in }
     var onDownloadAlbum: (String) -> Void = { _ in }
     var albumDownloadState: (String) -> ServerDownloadActionState = { _ in .idle }
     var onDownload: (CatalogSong) -> Void = { _ in }
     var downloadState: (CatalogSong) -> ServerDownloadActionState = { _ in .idle }
 
+    private enum SearchCategory: String, CaseIterable {
+        case songs, artists, albums
+    }
+
+    @State private var category: SearchCategory = .songs
     @State private var query = ""
     @State private var link = ""
     @Environment(\.downtifyPalette) private var palette
 
     init(catalog: CatalogPresentationModel, library: LibraryPresentationModel,
          playback: PlaybackController,
-         onOpenAlbum: @escaping (CatalogAlbum) -> Void = { _ in },
-         onOpenArtist: @escaping (CatalogArtist) -> Void = { _ in },
          onDownloadAlbum: @escaping (String) -> Void = { _ in },
          albumDownloadState: @escaping (String) -> ServerDownloadActionState = { _ in .idle },
          onDownload: @escaping (CatalogSong) -> Void = { _ in },
@@ -29,8 +28,6 @@ struct CatalogSearchView: View {
         self.catalog = catalog
         self.library = library
         self.playback = playback
-        self.onOpenAlbum = onOpenAlbum
-        self.onOpenArtist = onOpenArtist
         self.onDownloadAlbum = onDownloadAlbum
         self.albumDownloadState = albumDownloadState
         self.onDownload = onDownload
@@ -52,7 +49,14 @@ struct CatalogSearchView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: category == .songs ? .leading : .center, spacing: 20) {
+            Picker("Search category", selection: $category) {
+                Text("Songs").tag(SearchCategory.songs)
+                Text("Artists").tag(SearchCategory.artists)
+                Text("Albums").tag(SearchCategory.albums)
+            }
+            .pickerStyle(.segmented)
+
             TextField("Songs, albums, artists", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.search)
@@ -71,7 +75,7 @@ struct CatalogSearchView: View {
             }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: category == .songs ? .leading : .center)
         .background(palette.background)
         .task(id: normalizedQuery) {
             guard !normalizedQuery.isEmpty else { return }
@@ -83,24 +87,26 @@ struct CatalogSearchView: View {
     }
 
     @ViewBuilder private var localResults: some View {
-        if !localSongs.isEmpty {
+        if category == .songs && !localSongs.isEmpty {
             sectionHeader("In your library")
             ForEach(localSongs) { track in
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(track.title).font(.body.weight(.semibold))
-                        Text(track.artist).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button { playback.replaceQueue(localSongs, startingAt: localSongs.firstIndex(of: track) ?? 0) } label: {
+                Button { playback.replaceQueue(localSongs, startingAt: localSongs.firstIndex(of: track) ?? 0) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(track.title).font(.body.weight(.semibold))
+                            Text(track.artist).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer()
                         Image(systemName: "play.fill").frame(minWidth: 44, minHeight: 44)
                     }
-                    .accessibilityLabel("Play \(track.title)")
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Play \(track.title)")
                 .padding(.vertical, 4)
             }
         }
-        if !localAlbums.isEmpty {
+        if category == .albums && !localAlbums.isEmpty {
             sectionHeader("Library albums")
             ForEach(localAlbums) { entry in
                 NavigationLink(value: entry.context) {
@@ -109,7 +115,7 @@ struct CatalogSearchView: View {
                 }
             }
         }
-        if !localArtists.isEmpty {
+        if category == .artists && !localArtists.isEmpty {
             sectionHeader("Library artists")
             ForEach(localArtists) { entry in
                 NavigationLink(value: entry.context) {
@@ -121,53 +127,169 @@ struct CatalogSearchView: View {
     }
 
     @ViewBuilder private var catalogResults: some View {
-        switch catalog.searchSongsState {
-        case .loading:
-            ProgressView("Searching catalog…")
-        case .failed(let message), .unavailable(let message):
-            Text(message).foregroundStyle(.secondary)
-        case .loaded(let songs), .partial(let songs, _):
-            songResults(songs)
-        case .empty:
-            EmptyView()
-        case .idle:
-            EmptyView()
+        if category == .songs {
+            switch catalog.searchSongsState {
+            case .loading:
+                ProgressView("Searching catalog…")
+            case .failed(let message), .unavailable(let message):
+                Text(message).foregroundStyle(.secondary)
+            case .loaded(let songs), .partial(let songs, _):
+                songResults(songs)
+            case .empty:
+                EmptyView()
+            case .idle:
+                EmptyView()
+            }
         }
 
-        switch catalog.searchAlbumsState {
-        case .loaded(let albums), .partial(let albums, _):
-            if !albums.isEmpty {
-                sectionHeader("Catalog albums")
-                ForEach(albums) { album in
-                    HStack {
-                        Button { onOpenAlbum(album) } label: {
-                            Label("\(album.title) · \(album.artist)", systemImage: "square.stack")
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        }.buttonStyle(.plain)
-                        if canRequestAlbumDownload(album), let url = album.url {
-                            serverAlbumDownloadButton(url: url, title: album.title)
+        if category == .albums {
+            switch catalog.searchAlbumsState {
+            case .loaded(let albums), .partial(let albums, _):
+                if !albums.isEmpty {
+                    sectionHeader("Catalog albums")
+                    ForEach(albums) { album in
+                        HStack {
+                            NavigationLink { albumDetail(album) } label: {
+                                Label("\(album.title) · \(album.artist)", systemImage: "square.stack")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }.buttonStyle(.plain)
+                            if canRequestAlbumDownload(album), let url = album.url {
+                                serverAlbumDownloadButton(url: url, title: album.title)
+                            }
                         }
                     }
                 }
+            case .loading: ProgressView("Searching catalog…")
+            case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+            default: EmptyView()
             }
-        case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
-        default: EmptyView()
         }
 
-        switch catalog.searchArtistsState {
-        case .loaded(let artists), .partial(let artists, _):
-            if !artists.isEmpty {
-                sectionHeader("Catalog artists")
-                ForEach(artists) { artist in
-                    Button { onOpenArtist(artist) } label: {
-                        Label(artist.name, systemImage: "person")
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }.buttonStyle(.plain)
+        if category == .artists {
+            switch catalog.searchArtistsState {
+            case .loaded(let artists), .partial(let artists, _):
+                if !artists.isEmpty {
+                    sectionHeader("Catalog artists")
+                    ForEach(artists) { artist in
+                        NavigationLink { artistDetail(artist) } label: {
+                            Label(artist.name, systemImage: "person")
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }.buttonStyle(.plain)
+                    }
+                }
+            case .loading: ProgressView("Searching catalog…")
+            case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+            default: EmptyView()
+            }
+        }
+    }
+
+    private func albumDetail(_ album: CatalogAlbum) -> AnyView {
+        AnyView(ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(album.artist).font(.headline).foregroundStyle(.secondary)
+                if finderAlbumID(album) != nil {
+                    switch catalog.finderAlbumState {
+                    case .loaded(let details), .partial(let details, _):
+                        songResults(details.tracks)
+                    case .loading, .idle: ProgressView("Loading album…")
+                    case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+                    case .empty: Text("No songs found.").foregroundStyle(.secondary)
+                    }
+                } else if album.url != nil {
+                    resolutionDetails
+                } else {
+                    Text("Album details are unavailable.").foregroundStyle(.secondary)
                 }
             }
-        case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
-        default: EmptyView()
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(palette.background)
+        .navigationTitle(album.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if let id = finderAlbumID(album) { catalog.loadFinderAlbum(id: id) }
+            else if let url = album.url { catalog.resolveURL(url) }
+        })
+    }
+
+    private func artistDetail(_ artist: CatalogArtist) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if finderArtistID(artist) != nil {
+                    switch catalog.finderArtistState {
+                    case .loaded(let details), .partial(let details, _):
+                        if !details.bio.isEmpty { Text(details.bio).font(.subheadline) }
+                        if case .loaded(let songs) = catalog.finderArtistSongsState, !songs.isEmpty {
+                            songResults(songs)
+                        } else {
+                            songResults(details.topSongs)
+                        }
+                    case .loading, .idle: ProgressView("Loading artist…")
+                    case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+                    case .empty: Text("Artist details are unavailable.").foregroundStyle(.secondary)
+                    }
+                    switch catalog.finderArtistAlbumsState {
+                    case .loaded(let albums), .partial(let albums, _):
+                        if !albums.isEmpty { sectionHeader("Albums") }
+                        ForEach(albums) { album in
+                            NavigationLink { albumDetail(album) } label: {
+                                Label(album.title, systemImage: "square.stack")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                        }
+                    case .loading: ProgressView("Loading artist albums…")
+                    case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+                    default: EmptyView()
+                    }
+                } else if artist.url != nil {
+                    resolutionDetails
+                } else {
+                    Text("Artist details are unavailable.").foregroundStyle(.secondary)
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(palette.background)
+        .navigationTitle(artist.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if let id = finderArtistID(artist) { catalog.loadFinderArtist(id: id, name: artist.name) }
+            else if let url = artist.url { catalog.resolveURL(url) }
+        }
+    }
+
+    @ViewBuilder private var resolutionDetails: some View {
+        switch catalog.urlResolutionState {
+        case .loaded(let resolution), .partial(let resolution, _):
+            songResults(resolution.tracks)
+            if !resolution.albums.isEmpty { sectionHeader("Albums") }
+            ForEach(resolution.albums) { album in
+                NavigationLink { albumDetail(album) } label: {
+                    Label(album.title, systemImage: "square.stack")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+            }
+        case .loading, .idle: ProgressView("Resolving link…")
+        case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
+        case .empty: Text("No results found.").foregroundStyle(.secondary)
+        }
+    }
+
+    private func finderAlbumID(_ album: CatalogAlbum) -> String? {
+        let id = album.deezerAlbumID ?? (album.source.lowercased() == "deezer" ? album.albumID : nil)
+        return id.flatMap { isDecimalID($0) ? $0 : nil }
+    }
+
+    private func finderArtistID(_ artist: CatalogArtist) -> String? {
+        let id = artist.deezerID ?? (artist.source.lowercased() == "deezer" ? artist.artistID : nil)
+        return id.flatMap { isDecimalID($0) ? $0 : nil }
+    }
+
+    private func isDecimalID(_ id: String) -> Bool {
+        !id.isEmpty && id.utf8.allSatisfy { (48...57).contains($0) }
     }
 
     @ViewBuilder private func songResults(_ songs: [CatalogSong]) -> some View {
@@ -175,21 +297,26 @@ struct CatalogSearchView: View {
             sectionHeader("Catalog songs")
             ForEach(songs) { song in
                 HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(song.title).font(.body.weight(.semibold))
-                        Text([song.artist, song.albumName].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
                     Button {
                         if song.source == "library" {
                             guard let track = song.libraryTrack(in: library.tracks) else { return }
                             playback.replaceQueue([.library(track)])
                             return
                         }
-                        let item = PlaybackItem.resolving(song, in: library.tracks)
-                        playback.replaceQueue([item])
-                    } label: { Image(systemName: "play.fill").frame(minWidth: 44, minHeight: 44) }
+                        playback.replaceQueue([PlaybackItem.resolving(song, in: library.tracks)])
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(song.title).font(.body.weight(.semibold))
+                                Text([song.artist, song.albumName].filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "play.fill").frame(minWidth: 44, minHeight: 44)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Play \(song.title)")
                     .disabled(song.source == "library" && song.libraryTrack(in: library.tracks) == nil)
                     if song.source != "library", catalog.externalCatalogAvailable {
@@ -224,7 +351,7 @@ struct CatalogSearchView: View {
                     sectionHeader("Albums in this link")
                     ForEach(resolution.albums) { album in
                         HStack {
-                            Button { onOpenAlbum(album) } label: {
+                            NavigationLink { albumDetail(album) } label: {
                                 Label("\(album.title) · \(album.artist)", systemImage: "square.stack")
                                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             }.buttonStyle(.plain)
