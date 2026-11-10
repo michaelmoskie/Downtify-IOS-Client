@@ -19,6 +19,131 @@ final class LibraryPresentationModelTests: XCTestCase {
         XCTAssertEqual(LibraryTrackOrdering.matching(sorted, query: " "), sorted)
     }
 
+    func testCatalogSearchDiscardsLateResultForAnOlderQuery() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let gate = CatalogPresentationTestGate()
+        let api = CatalogServingStub(libraryOnly: false, gate: gate)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        model.search("old")
+        await gate.waitUntilStarted()
+        model.search("new")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.title == "new" }
+            return false
+        }
+        await gate.release()
+        try await Task.sleep(for: .milliseconds(20))
+        if case .loaded(let songs) = model.searchSongsState {
+            XCTAssertEqual(songs.map(\.title), ["new"])
+        } else {
+            XCTFail("Expected the latest query results to remain visible")
+        }
+        continuation.finish()
+    }
+
+    func testCatalogSearchDiscardsLateResultAfterAccountChange() async throws {
+        let first = makeSession(server: "first")
+        let second = makeSession(server: "second")
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let gate = CatalogPresentationTestGate()
+        let model = CatalogPresentationModel(api: CatalogServingStub(libraryOnly: false, gate: gate),
+                                             sessionUpdates: { updates })
+        model.start()
+        continuation.yield(first)
+        await waitUntil { model.policyState == .ready }
+        model.search("old")
+        await gate.waitUntilStarted()
+
+        continuation.yield(second)
+        await waitUntil { model.session == second && model.policyState == .ready }
+        await gate.release()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(model.session, second)
+        XCTAssertEqual(model.searchQuery, "")
+        XCTAssertEqual(model.searchSongsState, .idle)
+        continuation.finish()
+    }
+
+    func testLibraryOnlyPolicyKeepsLocalSearchAndDisablesExternalFinderDetails() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let api = CatalogServingStub(libraryOnly: true)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        XCTAssertTrue(model.isLibraryOnly == true)
+        XCTAssertFalse(model.externalCatalogAvailable)
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "library" }
+            return false
+        }
+        model.loadFinderArtist(id: "123")
+        if case .unavailable = model.finderArtistState {
+            // Provider details are disabled while local library results remain usable.
+        } else {
+            XCTFail("Expected provider Finder details to be unavailable")
+        }
+        continuation.finish()
+    }
+
+    func testPolicyRefreshClearsExternalSearchThenAllowsLocalResults() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let policy = CatalogPolicyBox(libraryOnly: false)
+        let model = CatalogPresentationModel(api: CatalogServingStub(policy: policy), sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "youtube" }
+            return false
+        }
+
+        await policy.setLibraryOnly(true)
+        await model.refreshPolicy(for: session)
+        XCTAssertTrue(model.isLibraryOnly == true)
+        XCTAssertEqual(model.searchSongsState, .idle)
+        XCTAssertEqual(model.searchQuery, "Roads")
+
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "library" }
+            return false
+        }
+        continuation.finish()
+    }
+
+    func testDiscoverSectionsKeepPartialSuccessWhenAnotherProviderFails() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let api = CatalogServingStub(libraryOnly: false, discoverPartial: true, spotifyFails: true)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        model.loadDiscover(library: [], albums: [], playlistNames: [], playlistIDs: [], shown: [])
+        await waitUntil {
+            if case .partial = model.discoverArtistsState,
+               case .partial = model.deezerCollectionsState,
+               case .failed = model.spotifyCollectionsState { return true }
+            return false
+        }
+        if case .partial = model.discoverArtistsState {} else { XCTFail("Expected partial artist results") }
+        if case .partial = model.deezerCollectionsState {} else { XCTFail("Expected the successful partial provider section") }
+        if case .failed = model.spotifyCollectionsState {} else { XCTFail("Expected only the failed provider section to fail") }
+        continuation.finish()
+    }
+
     func testLoadsCachedTracksBeforeReportingRefreshFailure() async throws {
         let (database, folder) = try makeDatabase()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -297,4 +422,104 @@ private actor CollectionsHTTP: HTTPDataLoading {
         }
         return (Data(body.utf8), try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
     }
+}
+
+private actor CatalogPresentationTestGate {
+    private var hasStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        hasStarted = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
+private actor CatalogPolicyBox {
+    private var libraryOnly: Bool
+
+    init(libraryOnly: Bool) { self.libraryOnly = libraryOnly }
+    func currentLibraryOnly() -> Bool { libraryOnly }
+    func setLibraryOnly(_ value: Bool) { libraryOnly = value }
+}
+
+private struct CatalogServingStub: CatalogServing {
+    let policy: CatalogPolicyBox
+    var discoverPartial = false
+    var spotifyFails = false
+    var gate: CatalogPresentationTestGate?
+
+    init(libraryOnly: Bool, discoverPartial: Bool = false, spotifyFails: Bool = false,
+         gate: CatalogPresentationTestGate? = nil) {
+        policy = CatalogPolicyBox(libraryOnly: libraryOnly)
+        self.discoverPartial = discoverPartial
+        self.spotifyFails = spotifyFails
+        self.gate = gate
+    }
+
+    init(policy: CatalogPolicyBox) { self.policy = policy }
+
+    func serverInfo(session: DeviceSession) async throws -> MobileAPIV1.ServerInfoDTO {
+        let libraryOnly = await policy.currentLibraryOnly()
+        let fixture = """
+        {"product":"Downtify","api_version":1,"server_id":"\(session.serverID)","library_only":\(libraryOnly),"capabilities":{"discover":true}}
+        """
+        return try JSONDecoder().decode(MobileAPIV1.ServerInfoDTO.self, from: Data(fixture.utf8))
+    }
+
+    func searchSongs(query: String, session: DeviceSession) async throws -> [CatalogSong] {
+        if query == "old" { await gate?.suspend() }
+        let libraryOnly = await policy.currentLibraryOnly()
+        return [try makeCatalogSong(title: query, source: libraryOnly ? "library" : "youtube")]
+    }
+
+    func searchAlbums(query: String, limit: Int, session: DeviceSession) async throws -> [CatalogAlbum] { [] }
+    func searchArtists(query: String, session: DeviceSession) async throws -> [CatalogArtist] { [] }
+    func search(query: String, albumLimit: Int, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func resolve(url: String, session: DeviceSession) async throws -> URLResolution { throw CatalogAPIError.featureUnavailable }
+    func preview(artist: String, title: String, duration: Double?, session: DeviceSession) async throws -> URL? { nil }
+    func finderSearch(query: String, limit: Int, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func finderArtist(id: String, language: String, session: DeviceSession) async throws -> CatalogFinderArtist { throw CatalogAPIError.featureUnavailable }
+    func finderArtistSongs(id: String, name: String, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func finderArtistAlbums(id: String, session: DeviceSession) async throws -> [CatalogAlbum] { [] }
+    func finderAlbumTrackCounts(ids: [String], session: DeviceSession) async throws -> [String: Int] { [:] }
+    func finderAlbum(id: String, session: DeviceSession) async throws -> CatalogFinderAlbum { throw CatalogAPIError.featureUnavailable }
+    func charts(limit: Int, session: DeviceSession) async throws -> CatalogCharts {
+        CatalogCharts(tracks: [], albums: [], artists: [], playlists: [])
+    }
+    func similar(artist: String, track: String, limit: Int, session: DeviceSession) async throws -> CatalogSimilarResults {
+        CatalogSimilarResults(artist: artist, track: track, source: "library", tracks: [])
+    }
+    func discover(library: [CatalogLibraryArtist], session: DeviceSession) async throws -> CatalogDiscoverResults {
+        CatalogDiscoverResults(artists: [], seeds: [], partial: discoverPartial)
+    }
+    func deezerCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistNames: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
+        CatalogCollectionsResults(source: "deezer", albums: [], moreAlbums: [], playlists: [], partial: discoverPartial)
+    }
+    func spotifyCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistIDs: [String], shown: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
+        if spotifyFails { throw APIError.httpStatus(502, retryAfter: nil) }
+        return CatalogCollectionsResults(source: "spotify", albums: [], moreAlbums: [], playlists: [], partial: false)
+    }
+    func blockedArtists(session: DeviceSession) async throws -> [CatalogBlockedArtist] { [] }
+    func blockArtist(name: String, session: DeviceSession) async throws -> CatalogBlockedArtist {
+        CatalogBlockedArtist(name: name, blockedAt: "")
+    }
+    func unblockArtist(name: String, session: DeviceSession) async throws {}
+}
+
+private func makeCatalogSong(title: String, source: String) throws -> CatalogSong {
+    let fixture = #"{"source":"\#(source)","song_id":"\#(title)","name":"\#(title)","artists":["Artist"],"url":""}"#
+    return try JSONDecoder().decode(CatalogSong.self, from: Data(fixture.utf8))
 }

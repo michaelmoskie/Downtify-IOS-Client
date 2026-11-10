@@ -172,6 +172,91 @@ final class APIClientContractTests: XCTestCase {
             XCTAssertEqual(error, .httpStatus(409, code: "track_is_playing"))
         }
     }
+
+    func testCatalogSongPreservesProviderPayloadWithoutConflatingIdentifiers() throws {
+        let json = #"{"source":"deezer","song_id":"deezer-55","youtube_id":"yt-abc","name":"Roads","artists":["Portishead"],"album_name":"Dummy","duration":305,"url":"https://deezer.test/track/55","preview_url":"https://preview.test/55.mp3","provider_extra":{"rank":1}}"#
+        let song = try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8))
+
+        XCTAssertEqual(song.source, "deezer")
+        XCTAssertEqual(song.songID, "deezer-55")
+        XCTAssertEqual(song.youtubeID, "yt-abc")
+        XCTAssertNotEqual(song.songID, song.youtubeID)
+        XCTAssertEqual(song.id, CatalogResultID(source: "deezer", value: "deezer-55"))
+        XCTAssertEqual(song.duration, 305)
+
+        let encoded = try JSONEncoder().encode(song)
+        let roundTrip = try JSONDecoder().decode(CatalogSong.self, from: encoded)
+        XCTAssertEqual(roundTrip.rawPayload, song.rawPayload)
+        XCTAssertEqual(roundTrip.rawPayload.objectValue?["provider_extra"], .object(["rank": .number(1)]))
+    }
+
+    func testCatalogTextSearchCanOmitVideoIdentity() throws {
+        let json = #"{"source":"text_search","song_id":"search-abc","name":"Roads","artists":["Portishead"],"duration":0,"url":"downtify-search:search-abc"}"#
+        let song = try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8))
+
+        XCTAssertEqual(song.songID, "search-abc")
+        XCTAssertNil(song.youtubeID)
+        XCTAssertNil(song.previewURL)
+    }
+
+    func testLibraryCatalogRowsResolveOnlyByExactFileWithinProvidedSnapshot() throws {
+        let json = #"{"source":"library","song_id":"library:Music/Roads.flac","name":"Roads","artists":["Portishead"],"file":"Music/Roads.flac","url":"","cover_url":"/cover?file=Music%2FRoads.flac"}"#
+        let song = try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8))
+        let matching = testLibraryTrack(id: "track-1", file: "Music/Roads.flac")
+        let sameTitleOtherFile = testLibraryTrack(id: "track-2", file: "Other/Roads.flac")
+
+        XCTAssertEqual(song.libraryTrack(in: [matching, sameTitleOtherFile])?.id, "track-1")
+        XCTAssertNil(song.libraryTrack(in: [sameTitleOtherFile]))
+        XCTAssertNil(song.libraryTrack(in: [matching, testLibraryTrack(id: "duplicate", file: "Music/Roads.flac")]))
+    }
+
+    func testCatalogSongRejectsMissingSourceOrTitle() {
+        let malformed = [#"{"source":"youtube","song_id":"v1"}"#, #"{"name":"Roads","song_id":"v1"}"#]
+        for json in malformed {
+            XCTAssertThrowsError(try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8)))
+        }
+    }
+
+    func testURLResolutionUsesFixedEnvelopeAndCatalogDTOs() throws {
+        let json = #"{"kind":"album","name":"Dummy","subtitle":"Portishead","cover_url":"https://cover.test/dummy.jpg","year":"1994","tracks":[{"source":"youtube","song_id":"v1","name":"Roads"}],"albums":[]}"#
+        let resolution = try JSONDecoder().decode(URLResolution.self, from: Data(json.utf8))
+
+        XCTAssertEqual(resolution.kind, "album")
+        XCTAssertEqual(resolution.name, "Dummy")
+        XCTAssertEqual(resolution.tracks.first?.songID, "v1")
+        XCTAssertTrue(resolution.albums.isEmpty)
+    }
+
+    func testDiscoverRecommendationsDecodeCurrentDeezerShape() throws {
+        let json = #"{"artists":[{"name":"Stereolab","deezer_id":"733","picture_url":"https://cover.test/stereolab.jpg","fans":12,"score":1.25,"because":["Stereolab"]}],"seeds":["Portishead"],"partial":true}"#
+        let discover = try JSONDecoder().decode(CatalogDiscoverResults.self, from: Data(json.utf8))
+
+        XCTAssertTrue(discover.partial)
+        XCTAssertEqual(discover.artists.first?.source, "deezer")
+        XCTAssertEqual(discover.artists.first?.artistID, "733")
+        XCTAssertEqual(discover.artists.first?.deezerID, "733")
+        XCTAssertEqual(discover.artists.first?.coverURL, "https://cover.test/stereolab.jpg")
+        XCTAssertEqual(discover.artists.first?.rawPayload.objectValue?["score"], .number(1.25))
+    }
+
+    func testCollectionRowsPreserveDeezerAndSpotifyIDsWhenSourceIsOmitted() throws {
+        let json = #"{"albums":[{"name":"Dummy","artist":"Portishead","year":"1994","cover_url":"https://cover.test/dummy.jpg","source":"deezer","deezer_album_id":"13","deezer_artist_id":"42","url":"https://www.deezer.com/album/13","reason":"similar","because":["Air"]},{"name":"Third","artist":"Portishead","year":"2008","cover_url":"https://cover.test/third.jpg","spotify_id":"sp-album-1","url":"https://open.spotify.com/album/sp-album-1","reason":"more_from","because":["Portishead"]}],"more_albums":[],"playlists":[{"name":"This Is Portishead","owner":"spotify","cover_url":"https://cover.test/list.jpg","spotify_id":"sp-playlist-1","url":"https://open.spotify.com/playlist/sp-playlist-1","reason":"this_is","artist":"Portishead"}],"partial":false}"#
+        let collections = try JSONDecoder().decode(CatalogCollectionsResults.self, from: Data(json.utf8))
+
+        XCTAssertEqual(collections.albums[0].source, "deezer")
+        XCTAssertEqual(collections.albums[0].deezerAlbumID, "13")
+        XCTAssertEqual(collections.albums[1].source, "spotify")
+        XCTAssertEqual(collections.albums[1].spotifyID, "sp-album-1")
+        XCTAssertEqual(collections.playlists.first?.source, "spotify")
+        XCTAssertEqual(collections.playlists.first?.spotifyID, "sp-playlist-1")
+    }
+}
+
+private func testLibraryTrack(id: String, file: String) -> LibraryTrack {
+    LibraryTrack(id: id, file: file, title: "Roads", artist: "Portishead", artists: ["Portishead"], album: "Dummy",
+                 albumArtist: "Portishead", albumID: "album", artistID: "artist", trackNumber: 1, year: "1994",
+                 duration: 305, codec: "flac", bitrate: 900_000, sampleRate: 44_100, channels: 2,
+                 size: 10_000, added: 0, hasCover: true, isExplicit: false, playlists: [])
 }
 
 private final class SequenceLoader: HTTPDataLoading {

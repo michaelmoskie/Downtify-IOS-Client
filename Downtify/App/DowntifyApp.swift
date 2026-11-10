@@ -13,6 +13,7 @@ struct DowntifyApp: App {
                          serverDownloadQueue: container.serverDownloadQueue)
                 .environmentObject(container.artwork)
                 .environmentObject(container.collections)
+                .environmentObject(container.catalogPresentation)
                 .task { container.collections.start() }
                 .environmentObject(container.offlineDownloads)
         }

@@ -5,6 +5,12 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000098 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPresentationModel.swift; sourceTree = "<group>"; };
+		000000000000000000000099 = { isa = PBXBuildFile; fileRef = 000000000000000000000098; };
+		000000000000000000000096 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogAPI.swift; sourceTree = "<group>"; };
+		000000000000000000000097 = { isa = PBXBuildFile; fileRef = 000000000000000000000096; };
+		000000000000000000000094 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Catalog.swift; sourceTree = "<group>"; };
+		000000000000000000000095 = { isa = PBXBuildFile; fileRef = 000000000000000000000094; };
 		000000000000000000000092 = { isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000093 = { isa = PBXBuildFile; fileRef = 000000000000000000000092; };
 		000000000000000000000077 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
@@ -350,6 +356,7 @@
 			children = (
 				000000000000000000000035,
 				00000000000000000000006D,
+				000000000000000000000094,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -378,6 +385,7 @@
 		00000000000000000000000B = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000098,
 				000000000000000000000001,
 				000000000000000000000003,
 				000000000000000000000053,
@@ -403,6 +411,7 @@
 		00000000000000000000000D = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000096,
 				000000000000000000000067,
 				000000000000000000000065,
 				000000000000000000000037,
@@ -489,6 +498,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000099,
+				000000000000000000000097,
+				000000000000000000000095,
 				000000000000000000000068,
 				000000000000000000000066,
 				000000000000000000000064,
