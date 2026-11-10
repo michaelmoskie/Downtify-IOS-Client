@@ -92,10 +92,16 @@ struct PlaybackStream: Sendable {
 protocol PlaybackStreamResolving {
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws
+    func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
+    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws
 }
 
 extension PlaybackStreamResolving {
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {}
+    func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        throw PlaybackFailure.invalidStream
+    }
+    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {}
 }
 
 struct PlaybackStreamResolver: PlaybackStreamResolving {
@@ -112,7 +118,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
 
     func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
         if let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
-        let (client, address, choices) = try await verifiedServer(for: session)
+        let (client, address, choices, _) = try await verifiedServer(for: session)
         let quality = choices.contains(preference) ? preference : .original
         let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
         let source = RangeSource(client: client, address: address, url: url, token: session.token)
@@ -138,10 +144,54 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         }
     }
 
+    func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        guard catalogSong.source.lowercased() != "library" else { throw CatalogAPIError.libraryOnly }
+        let (client, address, choices, libraryOnly) = try await verifiedServer(for: session)
+        guard !libraryOnly else { throw CatalogAPIError.libraryOnly }
+        let (videoID, duration) = try await catalogVideo(catalogSong, session: session)
+        guard duration.isFinite, duration >= 0 else { throw PlaybackFailure.invalidStream }
+        let url = try Self.catalogStreamURL(address: address, videoID: videoID, duration: duration)
+        let source = RangeSource(client: client, address: address, url: url, token: session.token)
+        let (_, response) = try await source.fetch(0...1)
+        let type = try Self.mediaType(response.mediaType, filename: catalogSong.file ?? "track.mp3")
+        // Catalog entries have their own cache account namespace and URL route, separate from /api/v1 library IDs.
+        let catalogScope = LibraryScope(serverID: session.serverID,
+                                        username: session.username.map { "catalog:\($0)" } ?? "catalog:device:\(session.deviceID)",
+                                        deviceID: "catalog:\(session.deviceID)")
+        let representation = PlaybackCache.Representation(scope: catalogScope, url: url,
+            validator: response.validator ?? UUID().uuidString, length: response.length, mediaType: response.mediaType)
+        let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
+            let (data, current) = try await source.fetch(range, validator: response.validator)
+            guard current.length == response.length, current.mediaType == response.mediaType,
+                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+            return data
+        }
+        return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
+                              quality: .original, availableQualities: choices) { range in
+            guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
+            if let cache { return try await cache.read(range, representation: representation, fetch: fetch) }
+            return try await fetch(range)
+        }
+    }
+
+    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {
+        guard catalogSong.source.lowercased() != "library" else { return }
+        let (client, address, _, libraryOnly) = try await verifiedServer(for: session)
+        guard !libraryOnly else { return }
+        let (videoID, _) = try await catalogVideo(catalogSong, session: session)
+        try Task.checkCancellation()
+        var request = URLRequest(url: address.url(for: "/api/stream/prefetch"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(CatalogPrefetchBody(videoID: videoID))
+        _ = try await client.send(request, to: address)
+    }
+
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {
         guard case .transcoded = quality,
               await offline?.offlineStream(trackID: track.id, session: session) == nil else { return }
-        let (client, address, choices) = try await verifiedServer(for: session)
+        let (client, address, choices, _) = try await verifiedServer(for: session)
         guard choices.contains(quality) else { return }
         let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 90)
@@ -150,14 +200,49 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         _ = try await client.send(request, to: address)
     }
 
-    private func verifiedServer(for session: DeviceSession) async throws -> (APIClient, ServerAddress, [PlaybackQuality]) {
+    private func verifiedServer(for session: DeviceSession) async throws -> (APIClient, ServerAddress, [PlaybackQuality], Bool) {
         let address = try ServerAddress(session.baseAddress)
         guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else { throw PlaybackFailure.insecureAddress }
         let client = APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
         let server = try await client.serverInfo(at: address)
         try Task.checkCancellation()
         guard server.serverID == session.serverID else { throw PlaybackFailure.differentServer }
-        return (client, address, PlaybackQualities.available(on: server))
+        return (client, address, PlaybackQualities.available(on: server), server.isLibraryOnly)
+    }
+
+    private func catalogVideo(_ song: CatalogSong, session: DeviceSession) async throws -> (String, Double) {
+        if let direct = Self.validYouTubeID(song.youtubeID) ?? Self.validYouTubeID(song.songID) {
+            return (direct, song.duration ?? 0)
+        }
+        let query = [song.artist, song.title].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        guard !query.isEmpty else { throw CatalogAPIError.invalidInput }
+        let candidates = try await CatalogAPI(transport: transport).searchSongs(query: query, session: session)
+        guard let match = candidates.first(where: { candidate in
+            guard (Self.validYouTubeID(candidate.youtubeID) ?? Self.validYouTubeID(candidate.songID)) != nil else { return false }
+            guard let wanted = song.duration, let found = candidate.duration else { return true }
+            return wanted.isFinite && found.isFinite && abs(wanted - found) <= 10
+        }), let videoID = Self.validYouTubeID(match.youtubeID) ?? Self.validYouTubeID(match.songID) else {
+            throw PlaybackFailure.invalidStream
+        }
+        return (videoID, song.duration ?? match.duration ?? 0)
+    }
+
+    private static func validYouTubeID(_ value: String?) -> String? {
+        guard let value, value.utf8.count == 11,
+              value.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else { return nil }
+        return value
+    }
+
+    static func catalogStreamURL(address: ServerAddress, videoID: String, duration: Double) throws -> URL {
+        guard validYouTubeID(videoID) != nil, duration.isFinite, duration >= 0,
+              var components = URLComponents(url: address.url(for: "/api/stream/file"), resolvingAgainstBaseURL: false) else {
+            throw PlaybackFailure.invalidStream
+        }
+        components.queryItems = [URLQueryItem(name: "video_id", value: videoID),
+                                 URLQueryItem(name: "duration", value: String(duration))]
+        guard let url = components.url else { throw PlaybackFailure.invalidStream }
+        return url
     }
 
     static func streamURL(address: ServerAddress, trackID: String, quality: PlaybackQuality) throws -> URL {
@@ -198,6 +283,11 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         guard let type = UTType(filenameExtension: ext) else { throw PlaybackFailure.unsupportedFormat }
         return (type.identifier, ext)
     }
+}
+
+private struct CatalogPrefetchBody: Encodable {
+    let videoID: String
+    enum CodingKeys: String, CodingKey { case videoID = "video_id" }
 }
 
 struct RangeSource {
