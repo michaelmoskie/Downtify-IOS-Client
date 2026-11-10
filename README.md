@@ -55,4 +55,5 @@ This project is licensed under the [GNU General Public License version 3](LICENS
 
 - [Porting plan](docs/PORTING_PLAN.md)
 - [Android parity audit](docs/ANDROID_PARITY_AUDIT.md)
+- [Search, Finder and Discover parity audit](docs/WEBUI_PARITY_AUDIT.md)
 - [Agent handoffs](agents/README.md)
