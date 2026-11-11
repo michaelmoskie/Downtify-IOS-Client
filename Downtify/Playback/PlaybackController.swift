@@ -34,6 +34,7 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var normalization: PlaybackNormalization
 
     private let cache: PlaybackCache?
+    private let preloadCache: PlaybackPreloadCache?
     private let reporting: PlaybackReporting?
     private let podcasts: any PodcastPlaybackServing
     private let verifySession: (DeviceSession) async -> Void
@@ -67,7 +68,15 @@ final class PlaybackController: ObservableObject {
     private var streamFailedDuringHandoff = false
     private var loadGeneration = 0
     private var prefetchTask: Task<Void, Never>?
-    private var prefetchedPlan: [PlaybackItem] = []
+    private var preloadPlan: PreloadPlan?
+
+    private struct PreloadPlan: Equatable {
+        let items: [PlaybackItem]
+        let quality: PlaybackQuality
+        let byteLimit: Int
+        let canDownload: Bool
+    }
+
     private var consecutiveUnplayableFailures = 0
     private var libraryOnlyPolicy = false
     private var libraryReportingActive = false
@@ -78,7 +87,8 @@ final class PlaybackController: ObservableObject {
     init(engine: any PlaybackEngining, resolver: any PlaybackStreamResolving,
          audioSession: any PlaybackAudioSession, remote: any PlaybackRemoteControlling,
          store: any PlaybackStateStoring, networkMonitor: any PlaybackNetworkMonitoring,
-         cache: PlaybackCache? = nil, reporting: PlaybackReporting? = nil,
+         cache: PlaybackCache? = nil, preloadCache: PlaybackPreloadCache? = nil,
+         reporting: PlaybackReporting? = nil,
          podcasts: any PodcastPlaybackServing = PodcastsAPI(),
          verifySession: @escaping (DeviceSession) async -> Void) {
         self.engine = engine
@@ -89,6 +99,7 @@ final class PlaybackController: ObservableObject {
         self.networkMonitor = networkMonitor
         self.verifySession = verifySession
         self.cache = cache
+        self.preloadCache = preloadCache
         self.reporting = reporting
         self.podcasts = podcasts
         qualityPreferences = store.loadQualities()
@@ -143,6 +154,7 @@ final class PlaybackController: ObservableObject {
         podcastProgressSaveFailed = false
         suspendedMusicPosition = 0
         engine.setNormalization(normalization)
+        let previousScope = scope
         session = newSession
         libraryOnlyPolicy = false
         reporting?.update(session: newSession, online: network != .unavailable)
@@ -158,6 +170,10 @@ final class PlaybackController: ObservableObject {
         phase = .idle
         publishMetadata()
 
+        if previousScope != scope, let preloadCache {
+            await preloadCache.retain([], byteLimit: buffering.byteLimit)
+            guard session == newSession else { return }
+        }
         guard let scope, let saved = store.load(for: scope) else { return }
         guard let tracks = try? await tracks(), !Task.isCancelled, session == newSession,
               !queueReadyForPersistence else { return }
@@ -379,7 +395,10 @@ final class PlaybackController: ObservableObject {
         let old = preferredQuality
         qualityPreferences = qualities
         store.saveQualities(qualities)
-        if old != preferredQuality { reloadForQualityChange() }
+        if old != preferredQuality {
+            reloadForQualityChange()
+            prefetchUpcoming()
+        }
     }
 
     func setBuffering(_ preference: PlaybackBuffering) {
@@ -531,6 +550,7 @@ final class PlaybackController: ObservableObject {
         let quality = preferredQuality
         phase = .loading
         publishMetadata()
+        prefetchUpcoming()
 
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -662,6 +682,7 @@ final class PlaybackController: ObservableObject {
         phase = .failed(failure)
         persist()
         publishMetadata()
+        prefetchUpcoming()
         if failure == .unauthorized, let session {
             Task { await verifySession(session) }
         }
@@ -807,7 +828,10 @@ final class PlaybackController: ObservableObject {
         reporting?.update(session: session, online: path != .unavailable)
         if previous != path { cancelPrefetch() }
         guard path != .unavailable else {
-            if previous != path { handOffToLocalStream() }
+            if previous != path {
+                prefetchUpcoming()
+                handOffToLocalStream()
+            }
             return
         }
         lastConnectedNetwork = path
@@ -816,9 +840,8 @@ final class PlaybackController: ObservableObject {
             play()
         } else if oldQuality != preferredQuality {
             reloadForQualityChange()
-        } else {
-            prefetchUpcoming()
         }
+        prefetchUpcoming()
         publishMetadata()
     }
 
@@ -896,40 +919,40 @@ final class PlaybackController: ObservableObject {
 
     private func cancelPrefetch() {
         prefetchTask?.cancel()
-        prefetchTask = nil
-        prefetchedPlan = []
+        preloadPlan = nil
     }
 
     private func prefetchUpcoming() {
-        guard podcast == nil, phase == .playing, let cache, let session else { return }
-        let upcoming = buffering.upcomingItems(in: queue, on: network)
-        let warmOnly = upcoming.isEmpty && network != .unavailable &&
-            (network != .cellular || buffering.readAheadOnCellular) && preferredQuality != .original
-        let next = warmOnly ? queue.next(automatic: true) : nil
-        let nextItem = next.flatMap { id in queue.entries.first { $0.id == id }?.item }
-        let planned = nextItem.flatMap { $0 == queue.current?.item ? nil : [$0] } ?? upcoming
-        guard planned != prefetchedPlan else { return }
+        guard let preloadCache, let session else { return }
+        let plan = PreloadPlan(
+            items: queue.preloadItems.filter { !libraryOnlyPolicy || $0.catalogSong == nil },
+            quality: preferredQuality, byteLimit: buffering.byteLimit,
+            canDownload: podcast == nil && phase == .playing && network != .unavailable
+        )
+        guard plan != preloadPlan else { return }
+
+        let previous = prefetchTask
         cancelPrefetch()
-        prefetchedPlan = planned
-        let quality = preferredQuality
+        preloadPlan = plan
         let resolver = resolver
-        let byteLimit = buffering.byteLimit
+        let keys = plan.items.map { PlaybackPreloadCache.Key(session: session, item: $0, quality: plan.quality) }
         prefetchTask = Task(priority: .utility) {
-            await cache.resize(to: byteLimit)
-            for item in planned {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await preloadCache.retain(keys, byteLimit: plan.byteLimit)
+            guard plan.canDownload else { return }
+
+            for (item, key) in zip(plan.items, keys) {
                 guard !Task.isCancelled else { return }
-                if warmOnly {
-                    if let track = item.libraryTrack {
-                        try? await resolver.warmTranscode(track: track, quality: quality, session: session)
-                    }
-                    continue
-                }
-                if let track = item.libraryTrack {
-                    guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
-                          stream.fileURL == nil, !Task.isCancelled else { continue }
-                    _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
-                } else if let song = item.catalogSong, !libraryOnlyPolicy {
-                    try? await resolver.prefetch(catalogSong: song, session: session)
+                if await preloadCache.contains(key) { continue }
+                do {
+                    try Task.checkCancellation()
+                    let stream = try await resolver.preloadSource(for: item, quality: plan.quality, session: session)
+                    try await preloadCache.store(stream, for: key)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // A failed preload should neither interrupt playback nor block later songs.
                 }
             }
         }

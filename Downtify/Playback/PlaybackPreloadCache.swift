@@ -62,6 +62,9 @@ actor PlaybackPreloadCache {
     }
 
     func retain(_ window: [Key], byteLimit: Int) {
+        if !opened && FileManager.default.fileExists(atPath: directory.path) {
+            try? openDirectory()
+        }
         self.byteLimit = Int64(max(0, byteLimit))
         let ranks = Dictionary(uniqueKeysWithValues: window.enumerated().map { ($1, $0) })
         for (url, entry) in entries where !window.contains(where: {

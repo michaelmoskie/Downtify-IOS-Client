@@ -9,9 +9,8 @@ final class CatalogPlaybackIntegrationTests: XCTestCase {
         var queue = PlaybackQueue()
         queue.replace([.library(library), .catalog(provider), .library(track("later"))], startingAt: 0)
         queue.repeatMode = .off
-        let buffering = PlaybackBuffering(readAhead: 2, cacheMegabytes: 100, readAheadOnCellular: false)
 
-        XCTAssertEqual(buffering.upcomingItems(in: queue, on: .wifiOrWired), [.catalog(provider), .library(track("later"))])
+        XCTAssertEqual(queue.preloadItems, [.library(library), .catalog(provider), .library(track("later"))])
         XCTAssertEqual(queue.current?.item.libraryTrack, library)
         XCTAssertNil(queue.entries[1].item.libraryTrack)
         XCTAssertEqual(queue.entries[1].item.title, "Provider song")

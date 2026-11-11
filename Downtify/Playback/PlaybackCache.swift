@@ -1,30 +1,9 @@
 import Foundation
 
 struct PlaybackBuffering: Codable, Equatable {
-    var readAhead = 0
     var cacheMegabytes = 100
-    var readAheadOnCellular = false
 
     var byteLimit: Int { ((min(200, max(10, cacheMegabytes)) + 5) / 10) * 10_000_000 }
-
-    func upcoming(in queue: PlaybackQueue, on network: PlaybackNetwork) -> [LibraryTrack] {
-        upcomingItems(in: queue, on: network).compactMap(\.libraryTrack)
-    }
-
-    func upcomingItems(in queue: PlaybackQueue, on network: PlaybackNetwork) -> [PlaybackItem] {
-        guard network != .unavailable, network != .cellular || readAheadOnCellular,
-              queue.repeatMode != .one, let current = queue.currentIndex else { return [] }
-        let order = queue.order
-        var upcoming = Array(order.dropFirst(current + 1))
-        if queue.repeatMode == .all { upcoming += order.prefix(current) }
-        var seenItems = [order[current].item]
-        let unique = upcoming.compactMap { entry -> PlaybackItem? in
-            guard !seenItems.contains(entry.item) else { return nil }
-            seenItems.append(entry.item)
-            return entry.item
-        }
-        return Array(unique.prefix(min(3, max(0, readAhead))))
-    }
 }
 
 actor PlaybackCache {

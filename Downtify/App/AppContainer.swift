@@ -54,7 +54,8 @@ struct AppContainer {
             resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads, preloadCache: preloadCache),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
             store: PlaybackStateStore(), networkMonitor: SystemPlaybackNetworkMonitor(),
-            cache: playbackCache, reporting: PlaybackReporting(verifySession: verifyPlaybackSession),
+            cache: playbackCache, preloadCache: preloadCache,
+            reporting: PlaybackReporting(verifySession: verifyPlaybackSession),
             verifySession: verifyPlaybackSession
         )
         playback = controller

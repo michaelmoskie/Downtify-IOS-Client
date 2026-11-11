@@ -93,19 +93,19 @@ protocol PlaybackStreamResolving {
     func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
                      allowAlternateQuality: Bool) async -> PlaybackStream?
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
 }
 
 extension PlaybackStreamResolving {
     func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
                      allowAlternateQuality: Bool) async -> PlaybackStream? { nil }
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {}
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
         throw PlaybackFailure.invalidStream
     }
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {}
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        throw PlaybackFailure.invalidStream
+    }
 }
 
 struct PlaybackStreamResolver: PlaybackStreamResolving {
@@ -208,32 +208,6 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         }
     }
 
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {
-        guard catalogSong.source.lowercased() != "library" else { return }
-        let (client, address, _, libraryOnly) = try await verifiedServer(for: session)
-        guard !libraryOnly else { return }
-        let (videoID, _) = try await catalogVideo(catalogSong, session: session)
-        try Task.checkCancellation()
-        var request = URLRequest(url: address.url(for: "/api/stream/prefetch"))
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(CatalogPrefetchBody(videoID: videoID))
-        _ = try await client.send(request, to: address)
-    }
-
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {
-        guard case .transcoded = quality,
-              await offline?.offlineStream(trackID: track.id, session: session) == nil else { return }
-        let (client, address, choices, _) = try await verifiedServer(for: session)
-        guard choices.contains(quality) else { return }
-        let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 90)
-        request.httpMethod = "HEAD"
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        _ = try await client.send(request, to: address)
-    }
-
     private func verifiedServer(for session: DeviceSession) async throws -> (APIClient, ServerAddress, [PlaybackQuality], Bool) {
         let address = try ServerAddress(session.baseAddress)
         guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else { throw PlaybackFailure.insecureAddress }
@@ -323,11 +297,6 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         guard let type = UTType(filenameExtension: ext) else { throw PlaybackFailure.unsupportedFormat }
         return (type.identifier, ext)
     }
-}
-
-private struct CatalogPrefetchBody: Encodable {
-    let videoID: String
-    enum CodingKeys: String, CodingKey { case videoID = "video_id" }
 }
 
 struct RangeSource {
