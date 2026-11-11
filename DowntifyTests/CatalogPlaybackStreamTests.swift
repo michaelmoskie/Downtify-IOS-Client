@@ -16,13 +16,14 @@ final class CatalogPlaybackStreamTests: XCTestCase {
         let loader = CatalogPlaybackLoader()
         let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
                                     deviceID: "device", username: "alice", role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
-        let song = try decodeSong(#"{"source":"youtube_music","song_id":"abcdefghijk","name":"Roads","artist":"Portishead","duration":123,"url":"https://youtube.com/watch?v=abcdefghijk"}"#)
+        let song = try decodeSong(#"{"source":"youtube","song_id":"abcdefghijk","name":"Roads","artists":["Portishead"],"duration":123,"url":"https://music.youtube.com/watch?v=abcdefghijk"}"#)
 
         let stream = try await PlaybackStreamResolver(transport: loader).resolve(catalogSong: song, quality: .original, session: session)
         XCTAssertEqual(stream.length, 4)
         let bytes = try await stream.read(0...3)
         XCTAssertEqual(bytes, Data("test".utf8))
         let requests = loader.requests
+        XCTAssertFalse(requests.contains { $0.url?.path == "/music/api/songs/search" })
         let streamRequest = try XCTUnwrap(requests.first { $0.url?.path == "/music/api/stream/file" })
         XCTAssertEqual(streamRequest.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
         XCTAssertEqual(streamRequest.value(forHTTPHeaderField: "Range"), "bytes=0-1")
@@ -177,7 +178,7 @@ private final class CatalogPlaybackLoader: HTTPDataLoading, @unchecked Sendable 
             data = try JSONSerialization.data(withJSONObject: payload)
             status = 200
         } else if url.path == "/music/api/songs/search" {
-            data = Data(#"[{"source":"youtube_music","song_id":"candidate-song","youtube_id":"abcdefghijk","name":"Roads","artist":"Portishead","duration":125,"url":"https://youtube.com/watch?v=abcdefghijk"}]"#.utf8)
+            data = Data(#"[{"source":"youtube","song_id":"abcdefghijk","name":"Roads","artists":["Portishead"],"duration":125,"url":"https://music.youtube.com/watch?v=abcdefghijk"}]"#.utf8)
             status = searchStatus
         } else {
             status = streamStatus
