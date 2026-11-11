@@ -238,7 +238,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
 
     private static func catalogYouTubeID(_ song: CatalogSong) -> String? {
         if let id = validYouTubeID(song.youtubeID) { return id }
-        guard song.source == "youtube_music" else { return nil }
+        guard song.source == "youtube" || song.source == "youtube_music" else { return nil }
         return validYouTubeID(song.songID)
     }
 
