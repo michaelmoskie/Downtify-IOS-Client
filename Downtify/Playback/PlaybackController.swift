@@ -141,6 +141,7 @@ final class PlaybackController: ObservableObject {
         suspendedMusicPosition = 0
         engine.setNormalization(normalization)
         session = newSession
+        libraryOnlyPolicy = false
         reporting?.update(session: newSession, online: network != .unavailable)
         resetListen()
         wantsPlayback = false

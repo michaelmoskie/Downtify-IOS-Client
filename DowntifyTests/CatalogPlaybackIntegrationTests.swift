@@ -47,6 +47,27 @@ final class CatalogPlaybackIntegrationTests: XCTestCase {
 
 @MainActor
 extension CatalogPlaybackIntegrationTests {
+    func testNewSessionRestoresCatalogQueueAfterPreviousLibraryOnlyPolicy() async throws {
+        let song = try catalogSong("Restored song", id: "restored-1")
+        var savedQueue = PlaybackQueue()
+        savedQueue.replace([.catalog(song)], startingAt: 0)
+        let controller = PlaybackController(
+            engine: CatalogTestEngine(), resolver: CatalogPlayableResolver(), audioSession: CatalogTestAudio(),
+            remote: CatalogTestRemote(), store: CatalogRestorationStore(saved: savedQueue.saved(position: 0)),
+            networkMonitor: CatalogTestNetwork(), verifySession: { _ in }
+        )
+        await controller.updateSession(catalogSession(), tracks: { [] })
+        controller.applyLibraryOnlyPolicy(true, tracks: [])
+
+        let external = DeviceSession(baseAddress: "https://external.local/music", serverID: "external-server",
+                                     serverName: "External", deviceID: "device", username: "listener", role: nil,
+                                     token: "token", allowsInsecureHTTP: false)
+        await controller.updateSession(external, tracks: { [] })
+
+        XCTAssertEqual(controller.queue.entries.map(\.item), [.catalog(song)])
+        XCTAssertEqual(controller.queue.current?.item, .catalog(song))
+    }
+
     func testControllerStopsAfterThreeConsecutiveUnplayableCatalogItems() async throws {
         let controller = PlaybackController(
             engine: CatalogTestEngine(), resolver: CatalogFailingResolver(), audioSession: CatalogTestAudio(),
@@ -165,6 +186,18 @@ private final class CatalogTestRemote: PlaybackRemoteControlling {
 @MainActor
 private struct CatalogTestStore: PlaybackStateStoring {
     func load(for scope: LibraryScope) -> SavedPlaybackQueue? { nil }
+    func save(_ queue: SavedPlaybackQueue, for scope: LibraryScope) {}
+    func loadQualities() -> PlaybackQualities { PlaybackQualities() }
+    func saveQualities(_ qualities: PlaybackQualities) {}
+}
+
+@MainActor
+private struct CatalogRestorationStore: PlaybackStateStoring {
+    let saved: SavedPlaybackQueue
+
+    func load(for scope: LibraryScope) -> SavedPlaybackQueue? {
+        scope.serverID == "external-server" ? saved : nil
+    }
     func save(_ queue: SavedPlaybackQueue, for scope: LibraryScope) {}
     func loadQualities() -> PlaybackQualities { PlaybackQualities() }
     func saveQualities(_ qualities: PlaybackQualities) {}
