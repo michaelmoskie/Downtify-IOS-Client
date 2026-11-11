@@ -77,6 +77,9 @@ patterns = (
     r'(?:alert|confirmationDialog)\(\s*"((?:[^"\\]|\\.)*)"',
     r'prompt:\s*"((?:[^"\\]|\\.)*)"',
     r'(?:browsePage|shelf)\((?:title:\s*)?"((?:[^"\\]|\\.)*)"',
+    r'(?:sectionHeader|sectionHeading|emptyMessage|heroCard|openProviderButton)\(\s*(?:title:\s*)?"((?:[^"\\]|\\.)*)"',
+    r'openProviderButton\([^\n]*?label:\s*"((?:[^"\\]|\\.)*)"',
+    r'\b(?:detail|subtitle):\s*"((?:[^"\\]|\\.)*)"',
     r'DowntifyUnavailableView\(title:\s*"((?:[^"\\]|\\.)*)"',
     r'collectionStatus\([\s\S]{0,250}?title:\s*"((?:[^"\\]|\\.)*)"',
     r'TrashAlert\(title:\s*"((?:[^"\\]|\\.)*)"',
@@ -90,6 +93,7 @@ patterns = (
     r'downloadMessage\s*=[^\n]*?"((?:[^"\\]|\\.)*)"',
     r'case\s+\.\w+:\s*"((?:[^"\\]|\\.)*)"',
     r'case\s+\.\w+\s*\([^)]*\)\s*:\s*"((?:[^"\\]|\\.)*)"',
+    r'case\s+(?:\.\w+(?:,\s*)?)+:\s*"((?:[^"\\]|\\.)*)"',
 )
 non_localized_case_values = {"music.mic", "opticaldisc", "music.note.list", "heart.fill"}
 source_keys = set()
@@ -99,6 +103,8 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
         for key in re.findall(pattern, content):
             # Skip regex fragments that terminate inside a nested Swift interpolation.
             if "queueStatus.paused ?" in key or "metadata.title ??" in key or "code ?? " in key:
+                continue
+            if key.startswith("Similar to \\("):
                 continue
             if key in non_localized_case_values:
                 continue
@@ -113,6 +119,14 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
             if "downloadMessage =" in line:
                 for key in re.findall(r'"((?:[^"\\]|\\.)*)"', line):
                     source_keys.add(format_localization_key(key.replace('\\"', '"').replace('\\n', '\n')))
+    if source.endswith("/Presentation/CatalogDiscoverView.swift"):
+        for key in re.findall(r'(?:case|,)\s*\w+\s*=\s*"([^"]+)"', content):
+            source_keys.add(key)
+        for key in re.findall(r'sectionHeading\("(Similar to [^\n]+)", count:', content):
+            source_keys.add(format_localization_key(key))
+    if source.endswith(("/Presentation/CatalogSearchView.swift", "/Presentation/CatalogDiscoverView.swift")):
+        for key in re.findall(r'TextField\(\s*"((?:[^"\\]|\\.)*)"', content):
+            source_keys.add(format_localization_key(key))
 source_keys.update({"System", "Light", "Dark", "OLED black"})
 source_keys.update({"Could not reach the server."})
 source_keys.update({"Queue %@ · %lld active", "Working on %@"})
@@ -124,6 +138,8 @@ source_keys.update({
 })
 if source_keys - reference:
     errors.append(f"source keys: missing={sorted(source_keys-reference)}")
+if reference - source_keys:
+    errors.append(f"source keys: extra={sorted(reference-source_keys)}")
 if errors:
     raise SystemExit("Localization coverage mismatch:\n" + "\n".join(errors))
 print(f"Localization key parity passed: {len(reference)} source keys across {len(languages)} locales")

@@ -28,7 +28,6 @@
 "Allow downloads again?" = "¿Permitir descargas de nuevo?";
 "Alphabetical" = "Alfabético";
 "Android reference app license (GPL-3.0)" = "Licencia de la app Android de referencia (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Android usa GET /api/similar/tracks, que queda fuera del contrato para dispositivos móviles. Downtify no lo solicita sin un contrato de servidor verificado.";
 "App language" = "Idioma de la app";
 "Appearance" = "Apariencia";
 "Artist" = "Artista";
@@ -46,7 +45,6 @@
 "Cancel download" = "Cancelar descarga";
 "Cancel offline download" = "Cancelar descarga sin conexión";
 "Cancelled" = "Cancelado";
-"Catalog discovery is unavailable" = "El descubrimiento del catálogo no está disponible";
 "Changes repeat mode" = "Cambia el modo de repetición";
 "Check your connection and try again. The server may have kept the song unchanged." = "Comprueba tu conexión e inténtalo de nuevo. Es posible que la canción siga igual en el servidor.";
 "Checking connection…" = "Comprobando conexión…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "No se pudieron cargar los episodios";
 "Could not load music trash" = "No se pudo cargar la papelera de música";
 "Could not load podcasts" = "No se pudieron cargar los podcasts";
-"Could not load the server queue. Check the connection and try again." = "No se pudo cargar la cola del servidor. Comprueba la conexión e inténtalo de nuevo.";
 "Could not play this episode" = "No se pudo reproducir este episodio";
 "Could not play this track" = "No se pudo reproducir esta pista";
 "Could not prepare trash request" = "No se pudo preparar la solicitud para la papelera";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Escanear código de emparejamiento";
 "Search" = "Buscar";
 "Search music trash" = "Buscar en la papelera de música";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Busca canciones, álbumes y artistas guardados. El contrato de dispositivo verificado no ofrece búsqueda en el catálogo del servidor.";
-"Search your library" = "Buscar en tu biblioteca";
 "Season %lld, episode %lld" = "Temporada %lld, episodio %lld";
 "Server address" = "Dirección del servidor";
 "Server download requested. The item will appear after library sync." = "Descarga al servidor solicitada. El elemento aparecerá tras sincronizar la biblioteca.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "¿Cerrar sesión en %@?";
 "Sign-in is paused for this server. Try again in %lld seconds." = "El inicio de sesión en este servidor está pausado. Inténtalo de nuevo en %lld segundos.";
 "Signed in as %@" = "Sesión iniciada como %@";
-"Similar tracks are unavailable" = "Canciones similares no disponibles";
 "Some downloads could not be started." = "No se pudieron iniciar algunas descargas.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "Parte del contenido del servidor, incluidos los títulos y las descripciones de música, se mantiene en su idioma original.";
 "Songs" = "Canciones";
@@ -270,7 +264,6 @@
 "System default" = "Predeterminado del sistema";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "El servidor Downtify se distribuye bajo la GNU Affero General Public License v3.0. Este cliente iOS se distribuye bajo la GNU General Public License v3.0.";
 "The audio stream is unavailable" = "La transmisión de audio no está disponible";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "El contrato verificado del servidor no define un endpoint de catálogo para Descubrir. Tu biblioteca guardada sigue disponible en Biblioteca y Buscar.";
 "The files may still be moving. The library updates after sync." = "Es posible que los archivos sigan moviéndose. La biblioteca se actualiza tras sincronizar.";
 "The request could not be completed. Check the connection and try again." = "No se pudo completar la solicitud. Comprueba la conexión e inténtalo de nuevo.";
 "The saved address now points to a different server. Reconnect before managing trash." = "La dirección guardada ahora apunta a otro servidor. Vuelve a conectarte antes de administrar la papelera.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "Repositorio del cliente iOS";
 "· Position %lld" = "· Posición %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Canciones, artistas y álbumes";
 "Songs, albums, artists" = "Canciones, álbumes y artistas";
 "Search songs, albums, and artists" = "Buscar canciones, álbumes y artistas";
 "Search your music" = "Buscar tu música";

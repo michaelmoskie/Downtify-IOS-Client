@@ -28,7 +28,6 @@
 "Allow downloads again?" = "Да се разрешат изтеглянията отново?";
 "Alphabetical" = "По азбучен ред";
 "Android reference app license (GPL-3.0)" = "Лиценз на Android приложението (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Android използва GET /api/similar/tracks, който не е част от договора за мобилни устройства. Downtify не изпраща тази заявка без проверен договор със сървъра.";
 "App language" = "Език на приложението";
 "Appearance" = "Външен вид";
 "Artist" = "Изпълнител";
@@ -46,7 +45,6 @@
 "Cancel download" = "Отказ на изтеглянето";
 "Cancel offline download" = "Отказ на офлайн изтеглянето";
 "Cancelled" = "Отказано";
-"Catalog discovery is unavailable" = "Откриването на каталог не е налично";
 "Changes repeat mode" = "Променя режима на повторение";
 "Check your connection and try again. The server may have kept the song unchanged." = "Проверете връзката и опитайте отново. Сървърът може да е запазил песента без промяна.";
 "Checking connection…" = "Проверка на връзката…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "Епизодите не могат да бъдат заредени";
 "Could not load music trash" = "Кошчето за музика не може да бъде заредено";
 "Could not load podcasts" = "Подкастите не могат да бъдат заредени";
-"Could not load the server queue. Check the connection and try again." = "Опашката на сървъра не може да бъде заредена. Проверете връзката и опитайте отново.";
 "Could not play this episode" = "Епизодът не може да бъде възпроизведен";
 "Could not play this track" = "Песента не може да бъде възпроизведена";
 "Could not prepare trash request" = "Заявката за кошчето не може да бъде подготвена";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Сканиране на код за сдвояване";
 "Search" = "Търсене";
 "Search music trash" = "Търсене в кошчето за музика";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Търсете запазени песни, албуми и изпълнители. Търсенето в каталога на сървъра не е налично според проверения договор за устройства.";
-"Search your library" = "Търсене в библиотеката";
 "Season %lld, episode %lld" = "Сезон %lld, епизод %lld";
 "Server address" = "Адрес на сървъра";
 "Server download requested. The item will appear after library sync." = "Заявено е изтегляне на сървъра. Елементът ще се появи след синхронизацията на библиотеката.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "Излизане от %@?";
 "Sign-in is paused for this server. Try again in %lld seconds." = "Входът за този сървър е временно спрян. Опитайте отново след %lld секунди.";
 "Signed in as %@" = "Влезли сте като %@";
-"Similar tracks are unavailable" = "Подобни песни не са налични";
 "Some downloads could not be started." = "Някои изтегляния не можаха да бъдат стартирани.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "Някои данни от сървъра, включително заглавията и описанията на музиката, остават на оригиналния си език.";
 "Songs" = "Песни";
@@ -270,7 +264,6 @@
 "System default" = "По подразбиране";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Сървърът Downtify се разпространява под GNU Affero General Public License версия 3.0. Този iOS клиент се разпространява под GNU General Public License версия 3.0.";
 "The audio stream is unavailable" = "Аудио потокът не е наличен";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Провереният договор на сървъра не дефинира крайна точка за каталог „Откриване“. Запазената ви библиотека остава достъпна в „Библиотека“ и „Търсене“.";
 "The files may still be moving. The library updates after sync." = "Файловете може все още да се преместват. Библиотеката се обновява след синхронизация.";
 "The request could not be completed. Check the connection and try again." = "Заявката не можа да бъде изпълнена. Проверете връзката и опитайте отново.";
 "The saved address now points to a different server. Reconnect before managing trash." = "Запазеният адрес вече сочи към друг сървър. Свържете се отново, преди да управлявате кошчето.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "Хранилище на iOS клиента";
 "· Position %lld" = "· Позиция %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Песни, изпълнители, албуми";
 "Songs, albums, artists" = "Песни, албуми, изпълнители";
 "Search songs, albums, and artists" = "Търсене на песни, албуми и изпълнители";
 "Search your music" = "Търсене в музиката";

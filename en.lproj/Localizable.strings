@@ -28,7 +28,6 @@
 "Allow downloads again?" = "Allow downloads again?";
 "Alphabetical" = "Alphabetical";
 "Android reference app license (GPL-3.0)" = "Android reference app license (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract.";
 "App language" = "App language";
 "Appearance" = "Appearance";
 "Artist" = "Artist";
@@ -46,7 +45,6 @@
 "Cancel download" = "Cancel download";
 "Cancel offline download" = "Cancel offline download";
 "Cancelled" = "Cancelled";
-"Catalog discovery is unavailable" = "Catalog discovery is unavailable";
 "Changes repeat mode" = "Changes repeat mode";
 "Check your connection and try again. The server may have kept the song unchanged." = "Check your connection and try again. The server may have kept the song unchanged.";
 "Checking connection…" = "Checking connection…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "Could not load episodes";
 "Could not load music trash" = "Could not load music trash";
 "Could not load podcasts" = "Could not load podcasts";
-"Could not load the server queue. Check the connection and try again." = "Could not load the server queue. Check the connection and try again.";
 "Could not play this episode" = "Could not play this episode";
 "Could not play this track" = "Could not play this track";
 "Could not prepare trash request" = "Could not prepare trash request";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Scan pairing code";
 "Search" = "Search";
 "Search music trash" = "Search music trash";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract.";
-"Search your library" = "Search your library";
 "Season %lld, episode %lld" = "Season %lld, episode %lld";
 "Server address" = "Server address";
 "Server download requested. The item will appear after library sync." = "Server download requested. The item will appear after library sync.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "Sign out of %@?";
 "Sign-in is paused for this server. Try again in %lld seconds." = "Sign-in is paused for this server. Try again in %lld seconds.";
 "Signed in as %@" = "Signed in as %@";
-"Similar tracks are unavailable" = "Similar tracks are unavailable";
 "Some downloads could not be started." = "Some downloads could not be started.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "Some server supplied content, including music titles and descriptions, stays in its original language.";
 "Songs" = "Songs";
@@ -270,7 +264,6 @@
 "System default" = "System default";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0.";
 "The audio stream is unavailable" = "The audio stream is unavailable";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search.";
 "The files may still be moving. The library updates after sync." = "The files may still be moving. The library updates after sync.";
 "The request could not be completed. Check the connection and try again." = "The request could not be completed. Check the connection and try again.";
 "The saved address now points to a different server. Reconnect before managing trash." = "The saved address now points to a different server. Reconnect before managing trash.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "iOS client repository";
 "· Position %lld" = "· Position %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Songs, artists, albums";
 "Songs, albums, artists" = "Songs, albums, artists";
 "Search songs, albums, and artists" = "Search songs, albums, and artists";
 "Search your music" = "Search your music";

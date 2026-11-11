@@ -28,7 +28,6 @@
 "Allow downloads again?" = "Engedélyezi újra a letöltéseket?";
 "Alphabetical" = "Betűrend";
 "Android reference app license (GPL-3.0)" = "Android referenciaalkalmazás licence (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Az Android a GET /api/similar/tracks végpontot használja, amely nem része a mobil eszközökre vonatkozó szerződésnek. A Downtify ellenőrzött szerveres szerződés nélkül nem kéri le.";
 "App language" = "Alkalmazás nyelve";
 "Appearance" = "Megjelenés";
 "Artist" = "Előadó";
@@ -46,7 +45,6 @@
 "Cancel download" = "Letöltés megszakítása";
 "Cancel offline download" = "Offline letöltés megszakítása";
 "Cancelled" = "Megszakítva";
-"Catalog discovery is unavailable" = "A katalógus felfedezése nem érhető el";
 "Changes repeat mode" = "Módosítja az ismétlési módot";
 "Check your connection and try again. The server may have kept the song unchanged." = "Ellenőrizd a kapcsolatot, majd próbáld újra. Lehet, hogy a szerver nem módosította a dalt.";
 "Checking connection…" = "Kapcsolat ellenőrzése…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "Az epizódok nem tölthetők be";
 "Could not load music trash" = "A zenei lomtár nem tölthető be";
 "Could not load podcasts" = "A podcastok nem tölthetők be";
-"Could not load the server queue. Check the connection and try again." = "A szerver várólistájának betöltése nem sikerült. Ellenőrizd a kapcsolatot, majd próbáld újra.";
 "Could not play this episode" = "Az epizód lejátszása nem sikerült";
 "Could not play this track" = "A zeneszám lejátszása nem sikerült";
 "Could not prepare trash request" = "A lomtárkérés nem készíthető elő";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Párosítási kód beolvasása";
 "Search" = "Keresés";
 "Search music trash" = "Keresés a zenei lomtárban";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Keressen a mentett dalok, albumok és előadók között. A szerverkatalógus keresését az ellenőrzött eszközszerződés nem támogatja.";
-"Search your library" = "Keresés a könyvtárban";
 "Season %lld, episode %lld" = "%lld. évad, %lld. epizód";
 "Server address" = "Szerver címe";
 "Server download requested. The item will appear after library sync." = "Szerveres letöltés kérve. Az elem a könyvtár szinkronizálása után jelenik meg.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "Kijelentkezel innen: %@?";
 "Sign-in is paused for this server. Try again in %lld seconds." = "A bejelentkezés szünetel ennél a szervernél. Próbáld újra %lld másodperc múlva.";
 "Signed in as %@" = "Bejelentkezve mint %@";
-"Similar tracks are unavailable" = "Hasonló dalok nem érhetők el";
 "Some downloads could not be started." = "Néhány letöltés nem indítható el.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "A szerverről érkező tartalmak, például a zenecímek és leírások, az eredeti nyelvükön maradnak.";
 "Songs" = "Dalok";
@@ -270,7 +264,6 @@
 "System default" = "Rendszer alapértelmezése";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "A Downtify szerver GNU Affero General Public License 3.0 licenc alatt érhető el. Ez az iOS-kliens GNU General Public License 3.0 licenc alatt érhető el.";
 "The audio stream is unavailable" = "A hangfolyam nem érhető el";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Az ellenőrzött szerver szerződés nem határoz meg Felfedezés katalógusvégpontot. A mentett könyvtár továbbra is elérhető a Könyvtár és Keresés nézetben.";
 "The files may still be moving. The library updates after sync." = "A fájlok áthelyezése még folyamatban lehet. A könyvtár szinkronizálás után frissül.";
 "The request could not be completed. Check the connection and try again." = "A kérést nem sikerült végrehajtani. Ellenőrizd a kapcsolatot, majd próbáld újra.";
 "The saved address now points to a different server. Reconnect before managing trash." = "A mentett cím most egy másik szerverre mutat. A kuka kezelése előtt csatlakozz újra.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "iOS-kliens adattára";
 "· Position %lld" = "· Helyezés: %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Dalok, előadók, albumok";
 "Songs, albums, artists" = "Dalok, albumok, előadók";
 "Search songs, albums, and artists" = "Dalok, albumok és előadók keresése";
 "Search your music" = "Zene keresése";

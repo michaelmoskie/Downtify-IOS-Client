@@ -28,7 +28,6 @@
 "Allow downloads again?" = "İndirmelere yeniden izin verilsin mi?";
 "Alphabetical" = "Alfabetik";
 "Android reference app license (GPL-3.0)" = "Android referans uygulama lisansı (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Android, mobil cihaz sözleşmesinin dışında kalan GET /api/similar/tracks uç noktasını kullanıyor. Downtify, doğrulanmış bir sunucu sözleşmesi olmadan bu isteği göndermez.";
 "App language" = "Uygulama dili";
 "Appearance" = "Görünüm";
 "Artist" = "Sanatçı";
@@ -46,7 +45,6 @@
 "Cancel download" = "İndirmeyi iptal et";
 "Cancel offline download" = "Çevrimdışı indirmeyi iptal et";
 "Cancelled" = "İptal edildi";
-"Catalog discovery is unavailable" = "Katalog keşfi kullanılamıyor";
 "Changes repeat mode" = "Tekrar modunu değiştirir";
 "Check your connection and try again. The server may have kept the song unchanged." = "Bağlantınızı kontrol edip yeniden deneyin. Sunucu şarkıyı değiştirmemiş olabilir.";
 "Checking connection…" = "Bağlantı denetleniyor…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "Bölümler yüklenemedi";
 "Could not load music trash" = "Müzik çöp kutusu yüklenemedi";
 "Could not load podcasts" = "Podcastler yüklenemedi";
-"Could not load the server queue. Check the connection and try again." = "Sunucu sırası yüklenemedi. Bağlantıyı kontrol edip yeniden deneyin.";
 "Could not play this episode" = "Bu bölüm çalınamadı";
 "Could not play this track" = "Bu parça çalınamadı";
 "Could not prepare trash request" = "Çöp kutusu isteği hazırlanamadı";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Eşleştirme kodunu tara";
 "Search" = "Ara";
 "Search music trash" = "Müzik çöp kutusunda ara";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Kaydedilen şarkı, albüm ve sanatçılarda arayın. Doğrulanmış cihaz sözleşmesinde sunucu kataloğu araması yoktur.";
-"Search your library" = "Kitaplığınızda arayın";
 "Season %lld, episode %lld" = "%lld. sezon, %lld. bölüm";
 "Server address" = "Sunucu adresi";
 "Server download requested. The item will appear after library sync." = "Sunucuya indirme istendi. Öğe kitaplık eşitlemesinden sonra görünür.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "%@ sunucusundan çıkış yapılsın mı?";
 "Sign-in is paused for this server. Try again in %lld seconds." = "Bu sunucuda oturum açma duraklatıldı. %lld saniye sonra yeniden deneyin.";
 "Signed in as %@" = "%@ olarak oturum açıldı";
-"Similar tracks are unavailable" = "Benzer parçalar kullanılamıyor";
 "Some downloads could not be started." = "Bazı indirmeler başlatılamadı.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "Müzik başlıkları ve açıklamaları dahil sunucudan gelen bazı içerikler özgün dilinde kalır.";
 "Songs" = "Şarkılar";
@@ -270,7 +264,6 @@
 "System default" = "Sistem varsayılanı";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Downtify sunucusu GNU Affero General Public License 3.0 altında dağıtılır. Bu iOS istemcisi GNU General Public License 3.0 altında dağıtılır.";
 "The audio stream is unavailable" = "Ses akışı kullanılamıyor";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Denetlenen sunucu sözleşmesi Keşfet kataloğu uç noktası tanımlamıyor. Kaydedilen kitaplığınız Kitaplık ve Ara’da kullanılabilir.";
 "The files may still be moving. The library updates after sync." = "Dosyalar hâlâ taşınıyor olabilir. Kitaplık eşitlemeden sonra güncellenir.";
 "The request could not be completed. Check the connection and try again." = "İstek tamamlanamadı. Bağlantıyı kontrol edip yeniden deneyin.";
 "The saved address now points to a different server. Reconnect before managing trash." = "Kaydedilmiş adres artık farklı bir sunucuyu gösteriyor. Çöp kutusunu yönetmeden önce yeniden bağlanın.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "iOS istemci deposu";
 "· Position %lld" = "· Konum %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Şarkılar, sanatçılar, albümler";
 "Songs, albums, artists" = "Şarkılar, albümler, sanatçılar";
 "Search songs, albums, and artists" = "Şarkı, albüm ve sanatçı ara";
 "Search your music" = "Müziğinde ara";

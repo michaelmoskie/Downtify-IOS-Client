@@ -28,7 +28,6 @@
 "Allow downloads again?" = "Να επιτραπούν ξανά οι λήψεις;";
 "Alphabetical" = "Αλφαβητικά";
 "Android reference app license (GPL-3.0)" = "Άδεια εφαρμογής αναφοράς Android (GPL-3.0)";
-"Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract." = "Το Android χρησιμοποιεί το GET /api/similar/tracks, που δεν περιλαμβάνεται στη σύμβαση κινητών συσκευών. Το Downtify δεν το ζητά χωρίς επαληθευμένη σύμβαση διακομιστή.";
 "App language" = "Γλώσσα εφαρμογής";
 "Appearance" = "Εμφάνιση";
 "Artist" = "Καλλιτέχνης";
@@ -46,7 +45,6 @@
 "Cancel download" = "Ακύρωση λήψης";
 "Cancel offline download" = "Ακύρωση λήψης εκτός σύνδεσης";
 "Cancelled" = "Ακυρώθηκε";
-"Catalog discovery is unavailable" = "Η ανακάλυψη καταλόγου δεν είναι διαθέσιμη";
 "Changes repeat mode" = "Αλλάζει τη λειτουργία επανάληψης";
 "Check your connection and try again. The server may have kept the song unchanged." = "Ελέγξτε τη σύνδεση και δοκιμάστε ξανά. Ο διακομιστής μπορεί να άφησε το τραγούδι αμετάβλητο.";
 "Checking connection…" = "Έλεγχος σύνδεσης…";
@@ -67,7 +65,6 @@
 "Could not load episodes" = "Δεν ήταν δυνατή η φόρτωση επεισοδίων";
 "Could not load music trash" = "Δεν ήταν δυνατή η φόρτωση του κάδου μουσικής";
 "Could not load podcasts" = "Δεν ήταν δυνατή η φόρτωση podcast";
-"Could not load the server queue. Check the connection and try again." = "Δεν ήταν δυνατή η φόρτωση της σειράς διακομιστή. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.";
 "Could not play this episode" = "Δεν ήταν δυνατή η αναπαραγωγή αυτού του επεισοδίου";
 "Could not play this track" = "Δεν ήταν δυνατή η αναπαραγωγή αυτού του τραγουδιού";
 "Could not prepare trash request" = "Δεν ήταν δυνατή η προετοιμασία αιτήματος κάδου";
@@ -233,8 +230,6 @@
 "Scan pairing code" = "Σάρωση κωδικού σύζευξης";
 "Search" = "Αναζήτηση";
 "Search music trash" = "Αναζήτηση στον κάδο μουσικής";
-"Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract." = "Αναζητήστε αποθηκευμένα τραγούδια, άλμπουμ και καλλιτέχνες. Η αναζήτηση καταλόγου διακομιστή δεν ορίζεται στην επαληθευμένη σύμβαση συσκευής.";
-"Search your library" = "Αναζήτηση στη βιβλιοθήκη";
 "Season %lld, episode %lld" = "Σεζόν %lld, επεισόδιο %lld";
 "Server address" = "Διεύθυνση διακομιστή";
 "Server download requested. The item will appear after library sync." = "Ζητήθηκε λήψη στον διακομιστή. Το στοιχείο θα εμφανιστεί μετά τον συγχρονισμό της βιβλιοθήκης.";
@@ -257,7 +252,6 @@
 "Sign out of %@?" = "Αποσύνδεση από %@;";
 "Sign-in is paused for this server. Try again in %lld seconds." = "Η σύνδεση σε αυτόν τον διακομιστή έχει παύσει. Δοκιμάστε ξανά σε %lld δευτερόλεπτα.";
 "Signed in as %@" = "Συνδεδεμένος ως %@";
-"Similar tracks are unavailable" = "Παρόμοια τραγούδια δεν είναι διαθέσιμα";
 "Some downloads could not be started." = "Δεν ήταν δυνατή η έναρξη ορισμένων λήψεων.";
 "Some server supplied content, including music titles and descriptions, stays in its original language." = "Ορισμένο περιεχόμενο από τον διακομιστή, όπως τίτλοι και περιγραφές μουσικής, παραμένει στην αρχική του γλώσσα.";
 "Songs" = "Τραγούδια";
@@ -270,7 +264,6 @@
 "System default" = "Προεπιλογή συστήματος";
 "The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0." = "Ο διακομιστής Downtify διανέμεται με GNU Affero General Public License έκδοση 3.0. Αυτός ο πελάτης iOS διανέμεται με GNU General Public License έκδοση 3.0.";
 "The audio stream is unavailable" = "Η ροή ήχου δεν είναι διαθέσιμη";
-"The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search." = "Η ελεγμένη σύμβαση διακομιστή δεν ορίζει σημείο καταλόγου Ανακάλυψης. Η αποθηκευμένη βιβλιοθήκη σας παραμένει διαθέσιμη στη Βιβλιοθήκη και στην Αναζήτηση.";
 "The files may still be moving. The library updates after sync." = "Η μεταφορά αρχείων μπορεί να συνεχίζεται. Η βιβλιοθήκη ενημερώνεται μετά τον συγχρονισμό.";
 "The request could not be completed. Check the connection and try again." = "Το αίτημα δεν ολοκληρώθηκε. Ελέγξτε τη σύνδεση και δοκιμάστε ξανά.";
 "The saved address now points to a different server. Reconnect before managing trash." = "Η αποθηκευμένη διεύθυνση δείχνει πλέον σε διαφορετικό διακομιστή. Συνδεθείτε ξανά πριν διαχειριστείτε τον κάδο.";
@@ -311,6 +304,7 @@
 "iOS client repository" = "Αποθετήριο πελάτη iOS";
 "· Position %lld" = "· Θέση %lld";
 "−%@" = "−%@";
+"Songs, artists, albums" = "Τραγούδια, καλλιτέχνες, άλμπουμ";
 "Songs, albums, artists" = "Τραγούδια, άλμπουμ, καλλιτέχνες";
 "Search songs, albums, and artists" = "Αναζήτηση τραγουδιών, άλμπουμ και καλλιτεχνών";
 "Search your music" = "Αναζήτηση στη μουσική σας";
