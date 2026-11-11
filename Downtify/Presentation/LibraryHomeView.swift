@@ -28,7 +28,7 @@ struct LibraryHomeView: View {
     @State private var showingCreatePlaylist = false
     @State private var newPlaylistName = ""
 
-    private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash }
+    private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash, about }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -78,6 +78,11 @@ struct LibraryHomeView: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
                 .tabItem { Label("Trash", systemImage: "trash") }.tag(Tab.adminTrash)
             }
+
+            NavigationStack {
+                AboutView(version: versionText, showsDoneButton: false)
+            }
+            .tabItem { Label("About", systemImage: "info.circle") }.tag(Tab.about)
         }
         .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -134,6 +139,13 @@ struct LibraryHomeView: View {
                 }
             }
         }
+    }
+
+    private var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String
+        return build.map { "\(version) (\($0))" } ?? version
     }
 
     private func browsePage<Content: View>(title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {

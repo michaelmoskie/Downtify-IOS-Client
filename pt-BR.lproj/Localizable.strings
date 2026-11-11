@@ -454,3 +454,10 @@
 "Songs are added after the server downloads them and the library syncs." = "As músicas são adicionadas após o servidor baixá-las e a biblioteca sincronizar.";
 "This feature is unavailable on this server." = "Este recurso está indisponível neste servidor.";
 "This request is not valid." = "Esta solicitação é inválida.";
+"Author" = "Author";
+"What's new in this build" = "What's new in this build";
+"Version 0.1.1 (build 2)" = "Version 0.1.1 (build 2)";
+"Added the app icon and updated release settings." = "Added the app icon and updated release settings.";
+"Michael Moskie" = "Michael Moskie";
+"The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "Os clientes para iOS e Android são licenciados sob a GNU GPL v3. O servidor Downtify é licenciado sob a GNU AGPL v3.";
+"iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";

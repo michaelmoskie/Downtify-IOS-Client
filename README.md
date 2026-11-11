@@ -46,6 +46,10 @@ You can test the app with your own reachable Downtify server instance.
 
 This project is licensed under the [GNU General Public License version 3](LICENSE), matching the Android reference app.
 
+## About page release notes
+
+Xcode generates the About page bullet list at build time from commit subjects on the current branch since its merge base with `origin/main` (falling back to local `main`). The generated `ReleaseNotes.json` is packaged into the app. Keep commit subjects user facing when building a release branch; a build from `main` itself has no branch changes to list.
+
 ## Boundaries and platform decisions
 
 - **App** owns composition. The SwiftUI App holds a single container across scenes. Add concrete adapters at this boundary as their features land and pass feature dependencies through initializers. Presentation owns scene and main-actor UI state. Future playback and transfer coordinators should be process-scoped, with their mutable state isolated from views.

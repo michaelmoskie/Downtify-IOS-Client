@@ -585,6 +585,18 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0000000000000000000000A8 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Generate release notes";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ReleaseNotes.json");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python3 \"$SRCROOT/scripts/generate_release_notes.py\" \"$SRCROOT\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ReleaseNotes.json\"";
+		};
 		000000000000000000000019 = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000000000018;
@@ -592,6 +604,7 @@
 				000000000000000000000015,
 				000000000000000000000016,
 				000000000000000000000017,
+				0000000000000000000000A8,
 			);
 			buildRules = (
 			);
