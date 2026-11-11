@@ -53,8 +53,9 @@ struct SettingsView: View {
     }
 }
 
-private struct AboutView: View {
+struct AboutView: View {
     let version: String
+    var showsDoneButton = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -65,26 +66,65 @@ private struct AboutView: View {
                     Text("Version \(version)").foregroundStyle(.secondary)
                 }.padding(.vertical, 4)
             }
-            Section("Project") {
+            Section {
+                Text("Michael Moskie")
+            } header: {
+                aboutSectionHeader("Author")
+            }
+            Section {
+                Text("Version \(version)")
+                    .font(.headline)
+                ForEach(releaseNotes, id: \.self) { note in
+                    Text(note)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                aboutSectionHeader("What's new in this build")
+            }
+            Section {
                 Link("iOS client repository", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client")!)
                 Link("Server source code", destination: URL(string: "https://github.com/henriquesebastiao/downtify")!)
                 Link("Report a bug", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client/issues")!)
+            } header: {
+                aboutSectionHeader("Project")
             }
-            Section("Acknowledgments and licenses") {
+            Section {
                 Text("Downtify for iOS is an independent client for the Downtify server. Artwork, names, and media are supplied by your server and their respective rights holders.")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("The Downtify server is distributed under the GNU Affero General Public License v3.0. This iOS client is distributed under the GNU General Public License v3.0.")
+                Text("The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3.")
                     .fixedSize(horizontal: false, vertical: true)
+                Link("iOS client license (GPL-3.0)", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client/blob/main/LICENSE")!)
                 Link("Server license (AGPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify/blob/main/LICENSE")!)
                 Link("Android reference app license (GPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify-android/blob/100be83e49c3250424e6326670a73bff69325b73/LICENSE")!)
+            } header: {
+                aboutSectionHeader("Acknowledgments and licenses")
             }
-            Section("Disclaimer") {
+            Section {
                 Text("Downtify is provided as-is. Availability and playback depend on your server and its media sources.")
                     .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                aboutSectionHeader("Disclaimer")
             }
         }
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .toolbar {
+            if showsDoneButton {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+    }
+
+    private func aboutSectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var releaseNotes: [String] {
+        guard let url = Bundle.main.url(forResource: "ReleaseNotes", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let notes = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [] }
+        return notes[version] ?? []
     }
 }

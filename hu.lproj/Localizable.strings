@@ -454,3 +454,10 @@
 "Songs are added after the server downloads them and the library syncs." = "A dalok azután kerülnek be, hogy a kiszolgáló letöltötte őket és a könyvtár szinkronizálódott.";
 "This feature is unavailable on this server." = "Ez a funkció ezen a kiszolgálón nem érhető el.";
 "This request is not valid." = "Érvénytelen kérés.";
+"Author" = "Author";
+"What's new in this build" = "What's new in this build";
+"Version 0.1.1 (build 2)" = "Version 0.1.1 (build 2)";
+"Added the app icon and updated release settings." = "Added the app icon and updated release settings.";
+"Michael Moskie" = "Michael Moskie";
+"The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "Az iOS- és Android-kliensek GNU GPL v3 licenc alatt állnak. A Downtify szerver GNU AGPL v3 licenc alatt áll.";
+"iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";

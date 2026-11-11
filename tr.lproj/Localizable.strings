@@ -454,3 +454,10 @@
 "Songs are added after the server downloads them and the library syncs." = "Şarkılar sunucu bunları indirdikten ve kitaplık eşzamanlandıktan sonra eklenir.";
 "This feature is unavailable on this server." = "Bu özellik bu sunucuda kullanılamıyor.";
 "This request is not valid." = "Bu istek geçerli değil.";
+"Author" = "Author";
+"What's new in this build" = "What's new in this build";
+"Version 0.1.1 (build 2)" = "Version 0.1.1 (build 2)";
+"Added the app icon and updated release settings." = "Added the app icon and updated release settings.";
+"Michael Moskie" = "Michael Moskie";
+"The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "iOS ve Android istemcileri GNU GPL v3 lisansı altındadır. Downtify sunucusu GNU AGPL v3 lisansı altındadır.";
+"iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";
