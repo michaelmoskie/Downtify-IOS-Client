@@ -178,8 +178,6 @@
 		};
 		000000000000000000000080 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		000000000000000000000081 = { isa = PBXBuildFile; fileRef = 000000000000000000000080; };
-		0000000000000000000000A6 = { isa = PBXFileReference; lastKnownFileType = text.json; path = ReleaseNotes.json; sourceTree = "<group>"; };
-		0000000000000000000000A7 = { isa = PBXBuildFile; fileRef = 0000000000000000000000A6; };
 		000000000000000000000082 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000083 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = bg; path = bg.lproj/Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000084 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -462,7 +460,6 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000092,
-				0000000000000000000000A6,
 				000000000000000000000043,
 				000000000000000000000044,
 				000000000000000000000051,
@@ -585,9 +582,20 @@
 			files = (
 				000000000000000000000091,
 				000000000000000000000093,
-				0000000000000000000000A7,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0000000000000000000000A8 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Generate release notes";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ReleaseNotes.json");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python3 \"$SRCROOT/scripts/generate_release_notes.py\" \"$SRCROOT\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ReleaseNotes.json\"";
 		};
 		000000000000000000000019 = {
 			isa = PBXNativeTarget;
@@ -596,6 +604,7 @@
 				000000000000000000000015,
 				000000000000000000000016,
 				000000000000000000000017,
+				0000000000000000000000A8,
 			);
 			buildRules = (
 			);

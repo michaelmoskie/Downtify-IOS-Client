@@ -48,7 +48,7 @@ This project is licensed under the [GNU General Public License version 3](LICENS
 
 ## About page release notes
 
-Edit `Downtify/ReleaseNotes.json` when preparing a release. Add a key in the form `version (build)`, matching the Xcode target's `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, with one feature or fix per array entry. The About page automatically shows the entries for the installed build. Notes for older builds can stay in the file.
+Xcode generates the About page bullet list at build time from commit subjects on the current branch since its merge base with `origin/main` (falling back to local `main`). The generated `ReleaseNotes.json` is packaged into the app. Keep commit subjects user facing when building a release branch; a build from `main` itself has no branch changes to list.
 
 ## Boundaries and platform decisions
 

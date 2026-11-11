@@ -61,22 +61,29 @@ struct AboutView: View {
     var body: some View {
         Form {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .center, spacing: 8) {
                     Text("Downtify").font(.title.bold())
                     Text("Version \(version)").foregroundStyle(.secondary)
-                }.padding(.vertical, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 4)
             }
             Section {
                 Text("Michael Moskie")
+                    .frame(maxWidth: .infinity, alignment: .center)
             } header: {
                 aboutSectionHeader("Author")
             }
             Section {
                 Text("Version \(version)")
                     .font(.headline)
-                ForEach(releaseNotes, id: \.self) { note in
-                    Text(note)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                ForEach(Array(releaseNotes.enumerated()), id: \.offset) { _, note in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•")
+                        Text(note)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             } header: {
                 aboutSectionHeader("What's new in this build")
@@ -135,8 +142,8 @@ struct AboutView: View {
     private var releaseNotes: [String] {
         guard let url = Bundle.main.url(forResource: "ReleaseNotes", withExtension: "json"),
               let data = try? Data(contentsOf: url),
-              let notes = try? JSONDecoder().decode([String: [String]].self, from: data)
+              let notes = try? JSONDecoder().decode([String].self, from: data)
         else { return [] }
-        return notes[version] ?? []
+        return notes
     }
 }
