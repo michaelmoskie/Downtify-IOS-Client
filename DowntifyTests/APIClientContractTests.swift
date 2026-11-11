@@ -250,7 +250,117 @@ final class APIClientContractTests: XCTestCase {
         XCTAssertEqual(collections.playlists.first?.source, "spotify")
         XCTAssertEqual(collections.playlists.first?.spotifyID, "sp-playlist-1")
     }
+    func testPlaylistMutationEndpointsUseAuthenticatedV1Contract() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#
+        let canonical = #"{"name":"Night","manual":true,"count":2,"track_ids":["a","a"]}"#
+        let loader = SequenceLoader(bodies: [info, canonical, info, canonical, info, canonical, info, canonical])
+        let session = playlistMutationSession()
+        let api = LibraryCollectionsAPI(transport: loader)
+
+        try await api.createPlaylist(name: "Night", session: session)
+        try await api.renamePlaylist(name: "Old", to: "Night", session: session)
+        try await api.editPlaylistTracks(
+            name: "Night", add: ["a", "a"], remove: ["b"],
+            removeEntries: [.init(trackID: "a", occurrence: 1)], allowDuplicates: true, session: session
+        )
+        try await api.reorderPlaylist(name: "Night", trackIDs: ["a", "a"], session: session)
+
+        let writes = loader.requests.enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
+        XCTAssertEqual(writes.map(\.httpMethod), ["POST", "POST", "POST", "PUT"])
+        XCTAssertEqual(writes.compactMap { $0.url?.path }, [
+            "/music/api/v1/playlists",
+            "/music/api/v1/playlists/rename",
+            "/music/api/v1/playlists/tracks",
+            "/music/api/v1/playlists/order"
+        ])
+        XCTAssertTrue(writes.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer secret" })
+        XCTAssertEqual(try jsonObject(of: writes[0]) as? [String: String], ["name": "Night"])
+        XCTAssertEqual(try jsonObject(of: writes[1]) as? [String: String], ["name": "Old", "new_name": "Night"])
+
+        let edit = try XCTUnwrap(try jsonObject(of: writes[2]) as? [String: Any])
+        XCTAssertEqual(edit["name"] as? String, "Night")
+        XCTAssertEqual(edit["add"] as? [String], ["a", "a"])
+        XCTAssertEqual(edit["remove"] as? [String], ["b"])
+        XCTAssertEqual(edit["allow_duplicates"] as? Bool, true)
+        let removeEntries = try XCTUnwrap(edit["remove_entries"] as? [[String: Any]])
+        XCTAssertEqual(removeEntries.count, 1)
+        XCTAssertEqual(removeEntries[0]["track_id"] as? String, "a")
+        XCTAssertEqual(removeEntries[0]["occurrence"] as? Int, 1)
+
+        let order = try XCTUnwrap(try jsonObject(of: writes[3]) as? [String: Any])
+        XCTAssertEqual(order["name"] as? String, "Night")
+        XCTAssertEqual(order["track_ids"] as? [String], ["a", "a"])
+    }
+
+    func testPlaylistMutationResponsePreservesDuplicateIDsAndOptionalFields() throws {
+        let response = try JSONDecoder().decode(
+            PlaylistMutationResponseDTO.self,
+            from: Data(#"{"name":"Night","manual":true,"count":3,"track_ids":["a","a","b"],"previous":"Old","added":2,"removed":1,"already":["b","b"]}"#.utf8)
+        )
+
+        XCTAssertEqual(response.name, "Night")
+        XCTAssertTrue(response.manual)
+        XCTAssertEqual(response.count, 3)
+        XCTAssertEqual(response.trackIDs, ["a", "a", "b"])
+        XCTAssertEqual(response.previous, "Old")
+        XCTAssertEqual(response.added, 2)
+        XCTAssertEqual(response.removed, 1)
+        XCTAssertEqual(response.already, ["b", "b"])
+
+        let minimal = try JSONDecoder().decode(
+            PlaylistMutationResponseDTO.self,
+            from: Data(#"{"name":"Empty","manual":true,"count":0,"track_ids":[]}"#.utf8)
+        )
+        XCTAssertNil(minimal.previous)
+        XCTAssertNil(minimal.added)
+        XCTAssertNil(minimal.removed)
+        XCTAssertNil(minimal.already)
+    }
+
+    func testPlaylistMutationRejectsRequestsAboveServerLimitsBeforeSending() async throws {
+        let loader = SequenceLoader(bodies: [])
+        let session = playlistMutationSession()
+        let api = LibraryCollectionsAPI(transport: loader)
+        let tooMany = Array(repeating: "track", count: 10_001)
+
+        do {
+            try await api.editPlaylistTracks(name: "Night", add: tooMany, session: session)
+            XCTFail("Expected the track edit limit to be enforced")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .httpStatus(400, retryAfter: nil))
+        }
+        do {
+            try await api.reorderPlaylist(name: "Night", trackIDs: tooMany, session: session)
+            XCTFail("Expected the reorder limit to be enforced")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .httpStatus(400, retryAfter: nil))
+        }
+        XCTAssertTrue(loader.requests.isEmpty)
+    }
+
+    func testPlaylistMutationPropagatesHTTPConflict() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#
+        let loader = SequenceLoader(bodies: [info, #"{"detail":"stale order"}"#], statuses: [200, 409])
+        do {
+            try await LibraryCollectionsAPI(transport: loader)
+                .reorderPlaylist(name: "Night", trackIDs: ["a", "a"], session: playlistMutationSession())
+            XCTFail("Expected HTTP conflict")
+        } catch let error as APIError {
+            XCTAssertEqual(error, .httpStatus(409, retryAfter: nil))
+        }
+        XCTAssertEqual(loader.requests.last?.url?.path, "/api/v1/playlists/order")
+    }
+
+    private func playlistMutationSession() -> DeviceSession {
+        DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Music",
+                      deviceID: "device", username: "alice", role: "user", token: "secret", allowsInsecureHTTP: false)
+    }
+
+    private func jsonObject(of request: URLRequest) throws -> Any {
+        try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody), options: [.fragmentsAllowed])
+    }
 }
+
 
 private func testLibraryTrack(id: String, file: String) -> LibraryTrack {
     LibraryTrack(id: id, file: file, title: "Roads", artist: "Portishead", artists: ["Portishead"], album: "Dummy",

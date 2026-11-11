@@ -41,6 +41,13 @@ final class ServerInfoContractTests: XCTestCase {
         XCTAssertEqual(lines.map(\.time), [1.2, 3.005, 3.5, 4.0, 5.25])
     }
 
+    func testPlaylistEditingRequiresExplicitServerCapability() throws {
+        XCTAssertTrue(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"playlist_editing":true}}"#).supportsPlaylistEditing)
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{"playlist_editing":false}}"#).supportsPlaylistEditing)
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1","capabilities":{}}"#).supportsPlaylistEditing)
+        XCTAssertFalse(try decode(#"{"product":"Downtify","api_version":1,"server_id":"server-1"}"#).supportsPlaylistEditing)
+    }
+
     func testIncompatibleServers() throws {
         let fixtures = [
             #"{"product":"Downtify","api_version":2,"server_id":"server-1"}"#,

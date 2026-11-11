@@ -9,25 +9,52 @@ struct LibraryPlaylist: Codable, Equatable, Identifiable, Sendable {
     let cover: String?
     let owner: String?
     let mine: Bool?
+    let manual: Bool?
+    let canEditTracks: Bool?
     let visibility: String?
     let sharedWithMe: Bool?
+    let sharedWith: [String]?
+    let editors: [String]?
 
     var id: String { name }
     var title: String { displayName.flatMap { $0.isEmpty ? nil : $0 } ?? name }
 
     enum CodingKeys: String, CodingKey {
-        case name, liked, favorite, cover, owner, mine, visibility
+        case name, liked, favorite, cover, owner, mine, manual, visibility, editors
         case displayName = "display_name"
         case trackIDs = "track_ids"
         case sharedWithMe = "shared_with_me"
+        case canEditTracks = "can_edit_tracks"
+        case sharedWith = "shared_with"
     }
 }
 
 protocol LibraryCollectionsFetching {
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist]
     func likes(for session: DeviceSession) async throws -> [String]
+    func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws
     func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws
+    func createPlaylist(name: String, session: DeviceSession) async throws
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws
+    func editPlaylistTracks(
+        name: String, add: [String]?, remove: [String]?, removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?,
+        allowDuplicates: Bool?, session: DeviceSession
+    ) async throws
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws
+}
+
+extension LibraryCollectionsFetching {
+    func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool { false }
+
+    // Existing read-only/test implementations can keep conforming while mutation support is added.
+    func createPlaylist(name: String, session: DeviceSession) async throws { throw APIError.transportFailure }
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws { throw APIError.transportFailure }
+    func editPlaylistTracks(
+        name: String, add: [String]?, remove: [String]?, removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?,
+        allowDuplicates: Bool?, session: DeviceSession
+    ) async throws { throw APIError.transportFailure }
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws { throw APIError.transportFailure }
 }
 
 struct LibraryCollectionsAPI: LibraryCollectionsFetching {
@@ -45,6 +72,17 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
         try await read(Likes.self, path: "/api/v1/likes", session: session).trackIDs
     }
 
+    func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool {
+        let address = try ServerAddress(session.baseAddress)
+        guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else {
+            throw APIError.insecureTransportConsentRequired
+        }
+        let info = try await APIClient(session: transport).serverInfo(at: address)
+        try Task.checkCancellation()
+        guard info.serverID == session.serverID else { throw ConnectionError.differentServer }
+        return info.supportsPlaylistEditing
+    }
+
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws {
         let body = try JSONEncoder().encode(LikeChange(trackID: trackID, liked: liked))
         _ = try await request("/api/v1/likes", body: body, session: session)
@@ -55,6 +93,37 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
         _ = try await request("/api/v1/playlists/favorite", body: body, session: session)
     }
 
+    func createPlaylist(name: String, session: DeviceSession) async throws {
+        let body = try JSONEncoder().encode(PlaylistCreateRequestDTO(name: name))
+        _ = try await request("/api/v1/playlists", method: "POST", body: body, session: session)
+    }
+
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws {
+        let body = try JSONEncoder().encode(PlaylistRenameRequestDTO(name: name, newName: newName))
+        _ = try await request("/api/v1/playlists/rename", method: "POST", body: body, session: session)
+    }
+
+    func editPlaylistTracks(
+        name: String, add: [String]? = nil, remove: [String]? = nil,
+        removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]? = nil,
+        allowDuplicates: Bool? = nil, session: DeviceSession
+    ) async throws {
+        let referenceCount = (add?.count ?? 0) + (remove?.count ?? 0) + (removeEntries?.count ?? 0)
+        guard referenceCount <= 10_000 else { throw APIError.httpStatus(400, retryAfter: nil) }
+        let requestBody = PlaylistTrackEditsRequestDTO(
+            name: name, add: add, remove: remove, removeEntries: removeEntries, allowDuplicates: allowDuplicates
+        )
+        _ = try await request(
+            "/api/v1/playlists/tracks", method: "POST", body: JSONEncoder().encode(requestBody), session: session
+        )
+    }
+
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws {
+        guard trackIDs.count <= 10_000 else { throw APIError.httpStatus(400, retryAfter: nil) }
+        let body = try JSONEncoder().encode(PlaylistOrderRequestDTO(name: name, trackIDs: trackIDs))
+        _ = try await request("/api/v1/playlists/order", method: "PUT", body: body, session: session)
+    }
+
     private func read<T: Decodable>(_ type: T.Type, path: String, session: DeviceSession) async throws -> T {
         let data = try await request(path, session: session)
         do { return try JSONDecoder().decode(type, from: data) }
@@ -62,12 +131,16 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
     }
 
     private func request(_ path: String, body: Data? = nil, session: DeviceSession) async throws -> Data {
+        try await request(path, method: body == nil ? "GET" : "PUT", body: body, session: session)
+    }
+
+    private func request(_ path: String, method: String, body: Data?, session: DeviceSession) async throws -> Data {
         let address = try await LibraryAPIClient(transport: transport).verifiedAddress(for: session)
         var request = URLRequest(url: address.url(for: path), cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
         if let body {
-            request.httpMethod = "PUT"
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }

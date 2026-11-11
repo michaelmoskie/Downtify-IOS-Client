@@ -40,7 +40,7 @@ def format_localization_key(value):
                     result.append("%@")
                 elif expression.startswith(("Int(", "UInt(")) or expression in {
                     "position", "days", "submittedCount", "entry.count", "queueStatus.active",
-                    "season", "number", "model.cooldownSeconds"
+                    "season", "number", "status", "model.cooldownSeconds"
                 }:
                     result.append("%lld")
                 else:
@@ -89,6 +89,7 @@ patterns = (
     r'state\s*=\s*\.(?:cachedError|storageFailure)\("((?:[^"\\]|\\.)*)"',
     r'downloadMessage\s*=[^\n]*?"((?:[^"\\]|\\.)*)"',
     r'case\s+\.\w+:\s*"((?:[^"\\]|\\.)*)"',
+    r'case\s+\.\w+\s*\([^)]*\)\s*:\s*"((?:[^"\\]|\\.)*)"',
 )
 non_localized_case_values = {"music.mic", "opticaldisc", "music.note.list", "heart.fill"}
 source_keys = set()

@@ -7,6 +7,44 @@ enum LibraryContext: Codable, Hashable, Sendable {
     case liked
 }
 
+/// One playlist occurrence. Playlist IDs may repeat, so `trackID` alone is not a row identity.
+struct PlaylistTrackOccurrence: Identifiable, Equatable, Sendable {
+    struct ID: Hashable, Sendable {
+        let trackID: String
+        let position: Int
+    }
+
+    let trackID: String
+    /// Zero-based position in the complete server-provided playlist order.
+    let position: Int
+
+    var id: ID { ID(trackID: trackID, position: position) }
+
+    static func ordered(_ trackIDs: [String]) -> [Self] {
+        trackIDs.enumerated().map { position, trackID in
+            Self(trackID: trackID, position: position)
+        }
+    }
+
+    /// Returns a complete reordered ID sequence only when every original occurrence is present.
+    /// The multiset check protects repeated IDs as well as tracks missing from the local catalog.
+    static func completeOrder(_ occurrences: [Self], matching trackIDs: [String]) -> [String]? {
+        guard occurrences.count == trackIDs.count else { return nil }
+        let expectedCounts = Dictionary(trackIDs.map { ($0, 1) }, uniquingKeysWith: +)
+        let proposedCounts = Dictionary(occurrences.map { ($0.trackID, 1) }, uniquingKeysWith: +)
+        guard expectedCounts == proposedCounts else { return nil }
+        return occurrences.map(\.trackID)
+    }
+}
+
+/// A playlist row retains the server occurrence even when its track is not in the local catalog.
+struct LibraryPlaylistTrackOccurrence: Identifiable, Equatable {
+    let occurrence: PlaylistTrackOccurrence
+    let track: LibraryTrack?
+
+    var id: PlaylistTrackOccurrence.ID { occurrence.id }
+}
+
 enum LibrarySort: String, CaseIterable, Identifiable {
     case recentlyAdded, alphabetical, artist
 
@@ -96,6 +134,13 @@ struct LibraryCatalog {
         case .artist(let id): LibraryTrackOrdering.sorted(artistTracks[id] ?? [])
         case .playlist: (playlist?.trackIDs ?? []).compactMap { tracksByID[$0] }
         case .liked: likedIDs.compactMap { tracksByID[$0] }
+        }
+    }
+
+    /// Resolves playlist occurrences without dropping IDs absent from this catalog snapshot.
+    func playlistOccurrences(_ playlist: LibraryPlaylist?) -> [LibraryPlaylistTrackOccurrence] {
+        PlaylistTrackOccurrence.ordered(playlist?.trackIDs ?? []).map { occurrence in
+            LibraryPlaylistTrackOccurrence(occurrence: occurrence, track: tracksByID[occurrence.trackID])
         }
     }
 

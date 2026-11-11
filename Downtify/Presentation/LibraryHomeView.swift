@@ -25,6 +25,8 @@ struct LibraryHomeView: View {
     @State private var tab = Tab.home
     @State private var trashTrack: LibraryTrack?
     @State private var showingSettings = false
+    @State private var showingCreatePlaylist = false
+    @State private var newPlaylistName = ""
 
     private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash }
     private enum Category: String, CaseIterable, Identifiable {
@@ -100,6 +102,36 @@ struct LibraryHomeView: View {
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 SettingsView(appearance: $appearance, language: $language)
+            }
+        }
+        .sheet(isPresented: $showingCreatePlaylist, onDismiss: { newPlaylistName = "" }) {
+            NavigationStack {
+                Form {
+                    TextField("Playlist name", text: $newPlaylistName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .accessibilityLabel("Playlist name")
+                    PlaylistMutationFeedbackRow()
+                }
+                .navigationTitle("New Playlist")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingCreatePlaylist = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Create") {
+                            let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await collections.createPlaylist(name: name)
+                                if collections.playlistMutationError == nil {
+                                    showingCreatePlaylist = false
+                                }
+                            }
+                        }
+                        .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  collections.mutationBusy)
+                    }
+                }
             }
         }
     }
@@ -329,6 +361,13 @@ struct LibraryHomeView: View {
     @ViewBuilder
     private var playlistContent: some View {
         collectionStatus(collections.playlistState, cached: collections.playlists != nil, title: "Playlists could not be refreshed.")
+        if collections.supportsPlaylistEditing {
+            Button("Create Playlist", systemImage: "plus") {
+                showingCreatePlaylist = true
+            }
+            .disabled(collections.mutationBusy)
+            .accessibilityHint("Create a new manual playlist")
+        }
         if collections.likesState == .unavailable && collections.likedIDs == nil {
             collectionStatus(.unavailable, cached: false, title: "Liked songs are unavailable.")
         }
@@ -491,6 +530,9 @@ private struct LibraryContextView: View {
     @Environment(\.downtifyPalette) private var palette
     @State private var confirmingDownload = false
     @State private var downloadMessage: LocalizedStringKey?
+    @State private var playlistSheet: PlaylistEditingSheet?
+    @State private var playlistNameDraft = ""
+    @State private var selectedTrackIDs: Set<String> = []
 
     private var playlist: LibraryPlaylist? {
         guard case .playlist(let name) = context else { return nil }
@@ -527,6 +569,7 @@ private struct LibraryContextView: View {
                 }
                 actions(tracks)
                 if let downloadMessage { Text(downloadMessage).font(.subheadline).foregroundStyle(.secondary) }
+                PlaylistMutationFeedbackRow()
                 status(tracks)
                 if case .artist(let id) = context {
                     let albums = library.catalog.albums(for: id)
@@ -565,6 +608,111 @@ private struct LibraryContextView: View {
         }
         .navigationTitle(title)
         .background(palette.background.ignoresSafeArea())
+        .toolbar {
+            if canEditTracks || canRenamePlaylist {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        if canRenamePlaylist {
+                            Button("Rename Playlist", systemImage: "pencil") {
+                                playlistNameDraft = playlist?.name ?? ""
+                                playlistSheet = .rename
+                            }
+                        }
+                        if canEditTracks {
+                            Button("Add Tracks", systemImage: "plus") {
+                                selectedTrackIDs = []
+                                playlistSheet = .addTracks
+                            }
+                            Button("Remove Track Occurrence", systemImage: "minus.circle") {
+                                playlistSheet = .removeOccurrence
+                            }
+                            Button("Reorder Tracks", systemImage: "arrow.up.arrow.down") {
+                                playlistSheet = .reorder
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "pencil.and.list")
+                    }
+                    .accessibilityLabel("Edit playlist")
+                }
+            }
+        }
+        .sheet(item: $playlistSheet) { sheet in
+            if let playlist {
+                switch sheet {
+                case .rename:
+                    NavigationStack {
+                        Form {
+                            TextField("Playlist name", text: $playlistNameDraft)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .accessibilityLabel("Playlist name")
+                            PlaylistMutationFeedbackRow()
+                        }
+                        .navigationTitle("Rename Playlist")
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cancel") { playlistSheet = nil }
+                            }
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Save") {
+                                    let name = playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    Task {
+                                        await collections.renamePlaylist(name: playlist.name, to: name)
+                                        if collections.playlistMutationError == nil {
+                                            playlistSheet = nil
+                                        }
+                                    }
+                                }
+                                .disabled(playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                          playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) == playlist.name ||
+                                          collections.mutationBusy)
+                            }
+                        }
+                    }
+                case .addTracks:
+                    PlaylistTrackSelectionSheet(
+                        tracks: LibraryTrackOrdering.sorted(library.tracks),
+                        selectedTrackIDs: $selectedTrackIDs,
+                        isBusy: collections.mutationBusy
+                    ) {
+                        let ids = LibraryTrackOrdering.sorted(library.tracks)
+                            .filter { selectedTrackIDs.contains($0.id) }
+                            .map(\.id)
+                        Task {
+                            await collections.addTracks(ids, to: playlist.name)
+                            if collections.playlistMutationError == nil {
+                                playlistSheet = nil
+                            }
+                        }
+                    }
+                case .removeOccurrence:
+                    PlaylistOccurrenceRemovalSheet(
+                        playlist: playlist,
+                        catalog: library.catalog,
+                        isBusy: collections.mutationBusy
+                    ) { occurrence in
+                        let rank = playlist.trackIDs.prefix(occurrence.position)
+                            .filter { $0 == occurrence.trackID }.count
+                        Task {
+                            await collections.removePlaylistOccurrence(
+                                trackID: occurrence.trackID, occurrence: rank, from: playlist.name
+                            )
+                        }
+                    }
+                case .reorder:
+                    PlaylistReorderSheet(playlist: playlist, catalog: library.catalog,
+                                         isBusy: collections.mutationBusy) { orderedIDs in
+                        Task {
+                            await collections.reorderPlaylist(playlist.name, trackIDs: orderedIDs)
+                            if collections.playlistMutationError == nil {
+                                playlistSheet = nil
+                            }
+                        }
+                    }
+                }
+            }
+        }
         .confirmationDialog("Download these songs for offline playback?", isPresented: $confirmingDownload, titleVisibility: .visible) {
             Button("Download songs") {
                 var failures = 0
@@ -614,6 +762,22 @@ private struct LibraryContextView: View {
                 .accessibilityLabel("Collection actions")
             }
         }
+    }
+
+    private var canEditTracks: Bool {
+        guard collections.supportsPlaylistEditing,
+              let playlist,
+              playlist.manual == true,
+              playlist.canEditTracks == true else { return false }
+        return true
+    }
+
+    private var canRenamePlaylist: Bool {
+        guard collections.supportsPlaylistEditing,
+              let playlist,
+              playlist.manual == true,
+              playlist.mine == true else { return false }
+        return true
     }
 
     @ViewBuilder
@@ -692,6 +856,59 @@ private struct ArtistCatalogAlbumsView: View {
             } catch is CancellationError { return }
             catch { self.error = error.localizedDescription }
             isLoading = false
+        }
+    }
+}
+
+private enum PlaylistEditingSheet: String, Identifiable {
+    case rename, addTracks, removeOccurrence, reorder
+    var id: String { rawValue }
+}
+
+private struct PlaylistTrackSelectionSheet: View {
+    let tracks: [LibraryTrack]
+    @Binding var selectedTrackIDs: Set<String>
+    let isBusy: Bool
+    let onAdd: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(tracks) { track in
+                    Button {
+                        if selectedTrackIDs.contains(track.id) {
+                            selectedTrackIDs.remove(track.id)
+                        } else {
+                            selectedTrackIDs.insert(track.id)
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(track.title)
+                                Text(track.artist).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedTrackIDs.contains(track.id) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(track.title), \(track.artist)")
+                    .accessibilityValue(selectedTrackIDs.contains(track.id) ? Text("Selected") : Text("Not selected"))
+                }
+            }
+            .navigationTitle("Add Tracks")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { onAdd() }
+                        .disabled(selectedTrackIDs.isEmpty || isBusy)
+                }
+            }
         }
     }
 }
@@ -784,6 +1001,156 @@ private struct ArtistCatalogAlbumView: View {
             } catch is CancellationError { return }
             catch { self.error = error.localizedDescription }
             isLoading = false
+        }
+    }
+}
+
+private struct PlaylistOccurrenceRemovalSheet: View {
+    let playlist: LibraryPlaylist
+    let catalog: LibraryCatalog
+    let isBusy: Bool
+    let onRemove: (PlaylistTrackOccurrence) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(catalog.playlistOccurrences(playlist)) { row in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(row.track?.title ?? String(localized: "Unavailable track"))
+                            Text(row.track?.artist ?? row.occurrence.trackID)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                            onRemove(row.occurrence)
+                        }
+                        .disabled(isBusy)
+                        .accessibilityLabel("Remove track occurrence")
+                        .accessibilityValue(Text("Occurrence \(Int(row.occurrence.position + 1))"))
+                    }
+                }
+            }
+            .navigationTitle("Remove Occurrence")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct PlaylistReorderSheet: View {
+    let playlist: LibraryPlaylist
+    let catalog: LibraryCatalog
+    let isBusy: Bool
+    let onSave: ([String]) -> Void
+    @State private var occurrences: [PlaylistTrackOccurrence] = []
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var collections: LibraryCollectionsModel
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(occurrences) { occurrence in
+                    VStack(alignment: .leading) {
+                        Text(catalog.tracksByID[occurrence.trackID]?.title ?? String(localized: "Unavailable track"))
+                        Text(catalog.tracksByID[occurrence.trackID]?.artist ?? occurrence.trackID)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .onMove { source, destination in occurrences.move(fromOffsets: source, toOffset: destination) }
+            }
+            .navigationTitle("Reorder Tracks")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let completeIDs = PlaylistTrackOccurrence.completeOrder(
+                            occurrences, matching: playlist.trackIDs
+                        ) else { return }
+                        onSave(completeIDs)
+                    }
+                    .disabled(isBusy || PlaylistTrackOccurrence.completeOrder(
+                        occurrences, matching: playlist.trackIDs
+                    ) == nil || collections.playlistMutationError == .conflictRequiresReview)
+                }
+            }
+            .onChange(of: playlist.trackIDs, initial: true) { _, trackIDs in
+                // A conflict refresh replaces the local draft with the authoritative server order.
+                // The user sees the refreshed rows before another reorder can be submitted.
+                occurrences = PlaylistTrackOccurrence.ordered(trackIDs)
+            }
+        }
+    }
+}
+
+private struct PlaylistMutationFeedbackRow: View {
+    @EnvironmentObject private var collections: LibraryCollectionsModel
+
+    @ViewBuilder
+    var body: some View {
+        if let operation = collections.activePlaylistMutation {
+            ProgressView {
+                Text(progressMessage(for: operation))
+            }
+            .accessibilityElement(children: .combine)
+            .listRowSeparator(.hidden)
+        } else if let error = collections.playlistMutationError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(errorMessage(for: error), systemImage: error == .conflictRequiresReview
+                      ? "arrow.clockwise.circle" : "exclamationmark.circle")
+                    .foregroundStyle(.secondary)
+                if error == .conflictRequiresReview {
+                    Text("The latest playlist order is loaded. Review the updated list before saving again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if error == .conflictRequiresReview {
+                    Button("Review Updated Order") { collections.clearPlaylistMutationError() }
+                        .font(.caption)
+                } else {
+                    Button("Dismiss") { collections.clearPlaylistMutationError() }
+                        .font(.caption)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    private func progressMessage(for operation: LibraryCollectionsModel.PlaylistMutationOperation) -> LocalizedStringKey {
+        switch operation {
+        case .creating: "Creating playlist…"
+        case .renaming: "Renaming playlist…"
+        case .addingTracks: "Adding tracks…"
+        case .removingTracks: "Removing tracks…"
+        case .removingTrack: "Removing tracks…"
+        case .reordering: "Updating playlist order…"
+        }
+    }
+
+    private func errorMessage(for error: LibraryCollectionsModel.PlaylistMutationError) -> LocalizedStringKey {
+        switch error {
+        case .conflictRequiresReview:
+            "This playlist changed on the server."
+        case .invalidRequest:
+            "The server could not accept this change. Check the playlist and selected tracks."
+        case .permissionDenied:
+            "The server denied this change. Your playlist permissions may have changed."
+        case .notFound:
+            "The playlist or one of its tracks is no longer available. Refresh and try again."
+        case .libraryIndexUnavailable:
+            "The server library index is still starting. Try again shortly."
+        case .httpStatus(let status):
+            "The server returned error \(status). Try again."
+        case .unexpected:
+            "Could not update this playlist. Check the connection and try again."
         }
     }
 }
