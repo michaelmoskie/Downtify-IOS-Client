@@ -242,6 +242,224 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testOfflinePlaybackAdvancesFromCachedLibrarySongToCachedCatalogSongWithoutRequests() async throws {
+        let session = deviceSession()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([])
+        let resolver = PlaybackStreamResolver(transport: transport, preloadCache: cache)
+        let fixture = PlaybackFixture(playbackResolver: resolver)
+        let library = PlaybackItem.library(track("cached-library"))
+        let catalog = PlaybackItem.catalog(try JSONDecoder().decode(CatalogSong.self, from: Data(
+            #"{"source":"youtube","song_id":"abcdefghijk","name":"Cached catalog"}"#.utf8
+        )))
+        let alternate: PlaybackQuality = .transcoded(.aac, bitrate: 128)
+        try await cache.store(preloadStream(quality: alternate),
+                              for: .init(session: session, item: library, quality: alternate))
+        try await cache.store(preloadStream(), for: .init(session: session, item: catalog, quality: .original))
+
+        await fixture.controller.updateSession(session) { [] }
+        fixture.network.update?(.unavailable)
+        let starts = expectation(description: "Library copy starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([library, catalog])
+        await fulfillment(of: [starts], timeout: 3)
+        XCTAssertEqual(fixture.controller.streamQuality, alternate)
+
+        let advances = expectation(description: "Catalog copy starts")
+        fixture.engine.onPlay = { advances.fulfill() }
+        fixture.engine.onEvent?(.ended)
+        await fulfillment(of: [advances], timeout: 3)
+        XCTAssertEqual(fixture.controller.queue.current?.item, catalog)
+        XCTAssertEqual(fixture.engine.localLoads, [true, true])
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+
+        fixture.controller.applyLibraryOnlyPolicy(true, tracks: [try XCTUnwrap(library.libraryTrack)])
+        XCTAssertEqual(fixture.controller.queue.entries.map(\.item), [library])
+    }
+
+    @MainActor
+    func testCurrentStreamHandsOffToCompletedCopyAtSamePositionWhenNetworkDrops() async throws {
+        let session = deviceSession()
+        let item = PlaybackItem.library(track("playing"))
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([.info(), .range("0-1/8", bytes: [1, 2])])
+        let fixture = PlaybackFixture(playbackResolver: PlaybackStreamResolver(transport: transport, preloadCache: cache))
+        await fixture.controller.updateSession(session) { [] }
+        let starts = expectation(description: "Network stream starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([item])
+        await fulfillment(of: [starts], timeout: 3)
+        fixture.engine.onEvent?(.position(21, duration: 100))
+
+        try await cache.store(preloadStream(), for: .init(session: session, item: item, quality: .original))
+        let resumes = expectation(description: "Local stream resumes")
+        fixture.engine.onPlay = { resumes.fulfill() }
+        fixture.network.update?(.unavailable)
+        fixture.engine.onEvent?(.failed(.network))
+        await fulfillment(of: [resumes], timeout: 3)
+        XCTAssertEqual(fixture.engine.loads, [0, 21])
+        XCTAssertEqual(fixture.engine.localLoads, [false, true])
+        XCTAssertEqual(fixture.controller.position, 21)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    @MainActor
+    func testMissingPreloadFileFallsBackToNetwork() async throws {
+        let session = deviceSession()
+        let item = PlaybackItem.library(track("evicted"))
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([.info(), .range("0-1/8", bytes: [1, 2])])
+        let fixture = PlaybackFixture(playbackResolver: PlaybackStreamResolver(transport: transport, preloadCache: cache))
+        let key = PlaybackPreloadCache.Key(session: session, item: item, quality: .original)
+        try await cache.store(preloadStream(), for: key)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        try FileManager.default.removeItem(at: XCTUnwrap(files.first))
+
+        await fixture.controller.updateSession(session) { [] }
+        let starts = expectation(description: "Network fallback starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([item])
+        await fulfillment(of: [starts], timeout: 3)
+        XCTAssertEqual(fixture.engine.localLoads, [false])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    @MainActor
+    func testCellularPreloadRefillsTheWindowAndRetriesOnReconnect() async throws {
+        let session = deviceSession()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let resolver = PreloadTestResolver(failOnce: "song-2")
+        let fixture = PlaybackFixture(playbackResolver: resolver, preloadCache: cache)
+        let items = (1...7).map { PlaybackItem.library(track("song-\($0)")) }
+        let quality = fixture.controller.qualityPreferences.cellular
+        let keys = items.map { PlaybackPreloadCache.Key(session: session, item: $0, quality: quality) }
+        await fixture.controller.updateSession(session) { [] }
+        fixture.network.update?(.cellular)
+        fixture.controller.replaceQueue(items)
+
+        try await waitForPreload { await cache.contains(keys[5]) }
+        let firstWindow = await resolver.attempts
+        XCTAssertEqual(firstWindow, Array(items.prefix(6)).compactMap { $0.libraryTrack?.id })
+        let didCacheFailedItem = await cache.contains(keys[1])
+        XCTAssertFalse(didCacheFailedItem)
+        let outsideWindow = await cache.contains(keys[6])
+        XCTAssertFalse(outsideWindow)
+
+        fixture.network.update?(.unavailable)
+        fixture.network.update?(.cellular)
+        try await waitForPreload { await cache.contains(keys[1]) }
+        fixture.engine.onEvent?(.ended)
+        try await waitForPreload { await cache.contains(keys[6]) }
+        let evicted = await cache.contains(keys[0])
+        XCTAssertFalse(evicted)
+    }
+
+    @MainActor
+    func testPreloadCancelsRemovedSongsAndClearsCompletedFilesOnSignOut() async throws {
+        let session = deviceSession()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let resolver = PreloadTestResolver(blocked: ["removed", "sign-out"])
+        let fixture = PlaybackFixture(playbackResolver: resolver, preloadCache: cache)
+        let items = ["current", "removed", "next", "sign-out"].map { PlaybackItem.library(track($0)) }
+        let keys = items.map { PlaybackPreloadCache.Key(session: session, item: $0, quality: .original) }
+        await fixture.controller.updateSession(session) { [] }
+        fixture.controller.replaceQueue(Array(items.prefix(3)))
+
+        try await waitForPreload { await resolver.reading == "removed" }
+        fixture.controller.remove(fixture.controller.queue.entries[1].id)
+        try await waitForPreload { await cache.contains(keys[2]) }
+        let cancelled = await resolver.cancelled
+        XCTAssertEqual(cancelled, ["removed"])
+        let removed = await cache.contains(keys[1])
+        XCTAssertFalse(removed)
+
+        fixture.controller.append([items[3]])
+        try await waitForPreload { await resolver.reading == "sign-out" }
+        await fixture.controller.updateSession(nil) { [] }
+        try await waitForPreload {
+            let files = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+            return files?.isEmpty == true
+        }
+        let signedOut = await resolver.cancelled
+        XCTAssertEqual(signedOut, ["removed", "sign-out"])
+        XCTAssertEqual(fixture.controller.phase, .idle)
+    }
+
+    @MainActor
+    func testAVPlayerFinishesCurrentSongAndFiveUpcomingSongsAfterNetworkLoss() async throws {
+        let session = deviceSession()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = PreloadAudioTransport(audio: waveFixture(seconds: 2))
+        let resolver = PlaybackStreamResolver(transport: transport, preloadCache: cache)
+        let engine = AVPlaybackEngine()
+        let network = TestNetworkMonitor()
+        let controller = PlaybackController(engine: engine, resolver: resolver, audioSession: SystemPlaybackAudioSession(),
+                                            remote: TestRemoteControls(), store: TestPlaybackStore(), networkMonitor: network,
+                                            preloadCache: cache, verifySession: { _ in })
+        defer { controller.pause(); engine.reset() }
+        let songs = (1...6).map { track("song-\($0)") }
+        let keys = songs.map { PlaybackPreloadCache.Key(session: session, item: .library($0), quality: .original) }
+        await controller.updateSession(session) { [] }
+        controller.replaceQueue(songs)
+        try await waitForPreload {
+            for key in keys where await !cache.contains(key) { return false }
+            return true
+        }
+        XCTAssertEqual(controller.queue.current?.track.id, songs[0].id)
+
+        let ended = expectation(description: "All six songs finish offline")
+        var offlineSongs: [String] = []
+        let observation = controller.$phase.sink { phase in
+            if phase == .playing, let id = controller.queue.current?.track.id, id != offlineSongs.last {
+                offlineSongs.append(id)
+            } else if phase == .ended {
+                ended.fulfill()
+            }
+        }
+        defer { observation.cancel() }
+        await transport.disconnect()
+        network.update?(.unavailable)
+        await fulfillment(of: [ended], timeout: 18)
+        XCTAssertEqual(offlineSongs, songs.map(\.id))
+        let requestsAfterDrop = await transport.requestsAfterDisconnect
+        XCTAssertEqual(requestsAfterDrop, 0)
+    }
+
+    @MainActor
+    private func waitForPreload(_ condition: () async -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await !condition() {
+            guard ContinuousClock.now < deadline else {
+                XCTFail("Timed out waiting for preload")
+                throw PlaybackFailure.media
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func preloadStream(quality: PlaybackQuality = .original) -> PlaybackStream {
+        PlaybackStream(contentType: "public.mp3", fileExtension: "mp3", length: 8, quality: quality,
+                       availableQualities: [.original, quality]) { range in
+            Data(repeating: 1, count: Int(range.count))
+        }
+    }
+
+    @MainActor
     func testAVPlayerLoadsAndSeeksRangedWAV() async throws {
         let wave = waveFixture()
         let engine = AVPlaybackEngine()
@@ -337,31 +555,22 @@ final class PlaybackTests: XCTestCase {
         XCTAssertEqual(requests.count, 11)
     }
 
-    func testWarmTranscodeUsesOnlySupportedHeadWithoutDownloadingAudio() async throws {
-        let transport = StreamTestTransport([.info(), .info(), .init(status: 200, headers: [:], body: Data())])
-        let resolver = PlaybackStreamResolver(transport: transport)
-        try await resolver.warmTranscode(track: track("song"), quality: .original, session: deviceSession())
-        try await resolver.warmTranscode(track: track("song"), quality: .transcoded(.mp3, bitrate: 128), session: deviceSession())
-        try await resolver.warmTranscode(track: track("song"), quality: .transcoded(.aac, bitrate: 128), session: deviceSession())
+    func testPreloadSourceUsesRequestedRangesWithoutReadingExtraBlocks() async throws {
+        let transport = StreamTestTransport([.info(), .range("0-1/8", bytes: [1, 2]),
+                                             .range("3-5/8", bytes: [4, 5, 6])])
+        let resolver = PlaybackStreamResolver(transport: transport, cache: PlaybackCache())
+        let source = try await resolver.preloadSource(for: .library(track("song")),
+                                                      quality: .transcoded(.aac, bitrate: 128), session: deviceSession())
+        let bytes = try await source.read(3...5)
+        XCTAssertEqual(bytes, Data([4, 5, 6]))
         let requests = await transport.requests
-        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "GET", "HEAD"])
-        XCTAssertEqual(requests.last?.url?.absoluteString, "https://music.local/music/api/v1/tracks/song/stream?format=aac&bitrate=128")
-        XCTAssertEqual(requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer playback-test-token")
-        XCTAssertNil(requests.last?.value(forHTTPHeaderField: "Range"))
+        XCTAssertEqual(requests.map { $0.value(forHTTPHeaderField: "Range") }, [nil, "bytes=0-1", "bytes=3-5"])
     }
 
-    func testReadAheadRespectsCellularShuffleRepeatAndDuplicateTracks() {
-        var queue = PlaybackQueue()
-        queue.replace([track("before"), track("current"), track("current"), track("next")], startingAt: 1)
-        queue.repeatMode = .all
-        let policy = PlaybackBuffering(readAhead: 3)
-        XCTAssertEqual(policy.upcoming(in: queue, on: .wifiOrWired).map(\.id), ["next", "before"])
-        XCTAssertTrue(policy.upcoming(in: queue, on: .cellular).isEmpty)
-        XCTAssertTrue(policy.upcoming(in: queue, on: .unavailable).isEmpty)
-        queue.setShuffle(true)
-        XCTAssertEqual(Set(policy.upcoming(in: queue, on: .wifiOrWired).map(\.id)), ["next", "before"])
-        queue.repeatMode = .one
-        XCTAssertTrue(policy.upcoming(in: queue, on: .wifiOrWired).isEmpty)
+    func testLegacyBufferingSettingsRetainCacheBudget() throws {
+        let json = #"{"readAhead":3,"readAheadOnCellular":false,"cacheMegabytes":120}"#
+        let buffering = try JSONDecoder().decode(PlaybackBuffering.self, from: Data(json.utf8))
+        XCTAssertEqual(buffering.byteLimit, 120_000_000)
     }
 
     @MainActor
@@ -696,8 +905,8 @@ final class PlaybackTests: XCTestCase {
         try await engine.load(stream, at: 0)
     }
 
-    private func waveFixture() -> Data {
-        let samples = Data(repeating: 0, count: 16_000)
+    private func waveFixture(seconds: Int = 1) -> Data {
+        let samples = Data(repeating: 0, count: seconds * 16_000)
         var wave = Data()
         func write(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
         func writeShort(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { wave.append(contentsOf: $0) } }
@@ -767,6 +976,87 @@ private actor StreamTestTransport: HTTPDataLoading {
     }
 }
 
+private actor PreloadTestResolver: PlaybackStreamResolving {
+    private(set) var attempts: [String] = []
+    private(set) var reading: String?
+    private(set) var cancelled: [String] = []
+    private var failOnce: String?
+    private let blocked: Set<String>
+
+    init(failOnce: String? = nil, blocked: Set<String> = []) {
+        self.failOnce = failOnce
+        self.blocked = blocked
+    }
+
+    func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        stream(quality: quality) { Data(repeating: 1, count: Int($0.count)) }
+    }
+
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        let id = try XCTUnwrap(item.libraryTrack?.id)
+        attempts.append(id)
+        if failOnce == id {
+            failOnce = nil
+            throw PlaybackFailure.network
+        }
+        return stream(quality: quality) { range in try await self.read(range, for: id) }
+    }
+
+    private func stream(quality: PlaybackQuality,
+                        read: @escaping @Sendable (ClosedRange<Int64>) async throws -> Data) -> PlaybackStream {
+        PlaybackStream(contentType: "public.mp3", fileExtension: "mp3", length: 8, quality: quality,
+                       availableQualities: [.original, quality], read: read)
+    }
+
+    private func read(_ range: ClosedRange<Int64>, for id: String) async throws -> Data {
+        reading = id
+        if blocked.contains(id) {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch is CancellationError {
+                cancelled.append(id)
+                throw CancellationError()
+            }
+        }
+        return Data(repeating: 1, count: Int(range.count))
+    }
+}
+
+private actor PreloadAudioTransport: HTTPDataLoading {
+    let audio: Data
+    private var disconnected = false
+    private(set) var requestsAfterDisconnect = 0
+
+    init(audio: Data) { self.audio = audio }
+
+    func disconnect() { disconnected = true }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        if disconnected {
+            requestsAfterDisconnect += 1
+            throw APIError.transportFailure
+        }
+
+        let url = try XCTUnwrap(request.url)
+        let result: StreamTestTransport.Response
+        if url.path.hasSuffix("/api/server/info") {
+            result = .info()
+        } else {
+            let range = try XCTUnwrap(request.value(forHTTPHeaderField: "Range")?.dropFirst(6))
+                .split(separator: "-").compactMap { Int($0) }
+            guard range.count == 2, range[0] <= range[1], range[0] < audio.count else {
+                throw PlaybackFailure.invalidStream
+            }
+            let end = min(range[1], audio.count - 1)
+            result = .range("\(range[0])-\(end)/\(audio.count)",
+                            bytes: Array(audio[range[0]...end]), mime: "audio/wav", original: true)
+        }
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: result.status, httpVersion: nil,
+                                                     headerFields: result.headers))
+        return (result.body, response)
+    }
+}
+
 private actor ListenRetryTransport: HTTPDataLoading {
     private(set) var bodies: [Data] = []
     private let onFirst: @Sendable () -> Void
@@ -807,11 +1097,13 @@ private struct PlaybackFixture {
     let store: TestPlaybackStore
     let controller: PlaybackController
 
-    init(store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil,
+    init(playbackResolver: (any PlaybackStreamResolving)? = nil, preloadCache: PlaybackPreloadCache? = nil,
+         store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil,
          podcasts: any PodcastPlaybackServing = PodcastsAPI()) {
         self.store = store ?? TestPlaybackStore()
-        controller = PlaybackController(engine: engine, resolver: resolver, audioSession: audio, remote: remote,
-                                        store: self.store, networkMonitor: network, reporting: reporting, podcasts: podcasts,
+        controller = PlaybackController(engine: engine, resolver: playbackResolver ?? resolver, audioSession: audio, remote: remote,
+                                        store: self.store, networkMonitor: network, preloadCache: preloadCache,
+                                        reporting: reporting, podcasts: podcasts,
                                         verifySession: { _ in })
     }
 }
@@ -821,11 +1113,15 @@ private final class TestPlaybackEngine: PlaybackEngining {
     var onEvent: ((PlaybackEngineEvent) -> Void)?
     var onPlay: (() -> Void)?
     var loads: [TimeInterval] = []
+    var localLoads: [Bool] = []
     var seeks: [TimeInterval] = []
     var mediaResets = 0
     var resets = 0
 
-    func load(_ stream: PlaybackStream, at position: TimeInterval) async throws { loads.append(position) }
+    func load(_ stream: PlaybackStream, at position: TimeInterval) async throws {
+        loads.append(position)
+        localLoads.append(stream.fileURL != nil)
+    }
     func play() {
         onEvent?(.playing)
         onPlay?()

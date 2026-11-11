@@ -43,19 +43,21 @@ final class CatalogPlaybackStreamTests: XCTestCase {
         XCTAssertEqual(search.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
     }
 
-    func testAmbiguousProviderIDUsesSearchForStreamingAndPrefetch() async throws {
+    func testAmbiguousProviderIDUsesSearchForStreamingAndPreload() async throws {
         let loader = CatalogPlaybackLoader()
         let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
                                     deviceID: "device", username: nil, role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
         let song = try decodeSong(#"{"source":"deezer","song_id":"12345678901","name":"Roads","artist":"Portishead","duration":123}"#)
         let resolver = PlaybackStreamResolver(transport: loader)
         _ = try await resolver.resolve(catalogSong: song, quality: .original, session: session)
-        try await resolver.prefetch(catalogSong: song, session: session)
+        let preload = try await resolver.preloadSource(for: .catalog(song), quality: .original, session: session)
+        let bytes = try await preload.read(0...3)
+        XCTAssertEqual(bytes, Data("test".utf8))
         XCTAssertEqual(loader.requests.filter { $0.url?.path == "/music/api/songs/search" }.count, 2)
         let stream = try XCTUnwrap(loader.requests.first { $0.url?.path == "/music/api/stream/file" })
         XCTAssertEqual(URLComponents(url: try XCTUnwrap(stream.url), resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "abcdefghijk")
-        let prefetch = try XCTUnwrap(loader.requests.first { $0.url?.path == "/music/api/stream/prefetch" })
-        XCTAssertEqual(try JSONSerialization.jsonObject(with: XCTUnwrap(prefetch.httpBody)) as? [String: String], ["video_id": "abcdefghijk"])
+        XCTAssertEqual(loader.requests.filter { $0.url?.path == "/music/api/stream/file" }
+            .compactMap { $0.value(forHTTPHeaderField: "Range") }, ["bytes=0-1", "bytes=0-1", "bytes=0-3"])
     }
 
     func testServerMismatchStopsBeforeCatalogBearerRequest() async throws {
@@ -102,7 +104,7 @@ final class CatalogPlaybackStreamTests: XCTestCase {
         }
     }
 
-    func testLibraryOnlyPolicyBlocksCatalogStreamAndPrefetch() async throws {
+    func testLibraryOnlyPolicyBlocksCatalogStreamAndPreload() async throws {
         let loader = CatalogPlaybackLoader(libraryOnly: true)
         let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
                                     deviceID: "device", username: nil, role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
@@ -113,32 +115,25 @@ final class CatalogPlaybackStreamTests: XCTestCase {
         } catch let error as CatalogAPIError {
             XCTAssertEqual(error, .libraryOnly)
         }
-        try await PlaybackStreamResolver(transport: loader).prefetch(catalogSong: song, session: session)
-        XCTAssertFalse(loader.requests.contains { $0.url?.path == "/music/api/stream/file" || $0.url?.path == "/music/api/stream/prefetch" })
+        do {
+            _ = try await PlaybackStreamResolver(transport: loader)
+                .preloadSource(for: .catalog(song), quality: .original, session: session)
+            XCTFail("Expected library-only policy to block catalog preload")
+        } catch let error as CatalogAPIError {
+            XCTAssertEqual(error, .libraryOnly)
+        }
+        XCTAssertFalse(loader.requests.contains { $0.url?.path == "/music/api/stream/file" })
         XCTAssertTrue(loader.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil })
     }
 
-    func testPrefetchUsesServerRouteAndCatalogJSONBody() async throws {
-        let loader = CatalogPlaybackLoader()
-        let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
-                                    deviceID: "device", username: nil, role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
-        let song = try decodeSong(#"{"source":"youtube_music","song_id":"abcdefghijk","name":"Roads","artist":"Portishead","duration":123}"#)
-        try await PlaybackStreamResolver(transport: loader).prefetch(catalogSong: song, session: session)
-
-        let request = try XCTUnwrap(loader.requests.first { $0.url?.path == "/music/api/stream/prefetch" })
-        XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
-        XCTAssertEqual(try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: String], ["video_id": "abcdefghijk"])
-        XCTAssertFalse(loader.requests.contains { $0.url?.host == "youtube.com" && $0.value(forHTTPHeaderField: "Authorization") != nil })
-    }
-
-    func testCancelledCatalogPrefetchStopsBeforeSendingBearerRequest() async throws {
+    func testCancelledCatalogPreloadStopsBeforeSendingBearerRequest() async throws {
         let loader = CatalogPlaybackLoader()
         let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
                                     deviceID: "device", username: nil, role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
         let song = try decodeSong(#"{"source":"youtube_music","song_id":"abcdefghijk","name":"Roads","artist":"Portishead","duration":123}"#)
         let task = Task {
-            try await PlaybackStreamResolver(transport: loader).prefetch(catalogSong: song, session: session)
+            _ = try await PlaybackStreamResolver(transport: loader)
+                .preloadSource(for: .catalog(song), quality: .original, session: session)
         }
         task.cancel()
         do {
@@ -146,7 +141,7 @@ final class CatalogPlaybackStreamTests: XCTestCase {
             XCTFail("Expected cancellation")
         } catch is CancellationError {
         }
-        XCTAssertFalse(loader.requests.contains { $0.url?.path == "/music/api/stream/prefetch" })
+        XCTAssertTrue(loader.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil })
     }
 
     private func decodeSong(_ json: String) throws -> CatalogSong {

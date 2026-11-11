@@ -15,6 +15,18 @@ enum PlaybackItem: Sendable, Equatable {
         return nil
     }
 
+    enum MediaID: Hashable, Sendable {
+        case library(String)
+        case catalog(CatalogResultID)
+    }
+
+    var mediaID: MediaID {
+        switch self {
+        case .library(let track): .library(track.id)
+        case .catalog(let song): .catalog(song.id)
+        }
+    }
+
     var title: String { libraryTrack?.title ?? catalogSong?.title ?? "" }
     var artist: String { libraryTrack?.artist ?? catalogSong?.artist ?? "" }
     var artists: [String] { libraryTrack?.artists ?? catalogSong?.artists ?? [] }
@@ -165,6 +177,24 @@ struct PlaybackQueue {
         } else {
             shuffledIDs = nil
         }
+    }
+
+    var preloadItems: [PlaybackItem] {
+        guard let currentIndex else { return [] }
+        let ordered = order
+        let current = ordered[currentIndex].item
+        guard repeatMode != .one else { return [current] }
+
+        var items = [current]
+        var seen = Set([current.mediaID])
+        let upcoming = ordered.dropFirst(currentIndex + 1)
+        let wrapped = repeatMode == .all ? ordered.prefix(currentIndex) : ordered.prefix(0)
+        for entry in upcoming + wrapped {
+            guard seen.insert(entry.item.mediaID).inserted else { continue }
+            items.append(entry.item)
+            if items.count == 6 { break }
+        }
+        return items
     }
 
     func next(automatic: Bool) -> UUID? {

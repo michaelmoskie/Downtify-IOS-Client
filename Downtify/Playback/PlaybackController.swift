@@ -34,6 +34,7 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var normalization: PlaybackNormalization
 
     private let cache: PlaybackCache?
+    private let preloadCache: PlaybackPreloadCache?
     private let reporting: PlaybackReporting?
     private let podcasts: any PodcastPlaybackServing
     private let verifySession: (DeviceSession) async -> Void
@@ -63,9 +64,19 @@ final class PlaybackController: ObservableObject {
     private var sessionTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var loadedFromDisk = false
+    private var localHandoffTask: Task<Void, Never>?
+    private var streamFailedDuringHandoff = false
     private var loadGeneration = 0
     private var prefetchTask: Task<Void, Never>?
-    private var prefetchedPlan: [PlaybackItem] = []
+    private var preloadPlan: PreloadPlan?
+
+    private struct PreloadPlan: Equatable {
+        let items: [PlaybackItem]
+        let quality: PlaybackQuality
+        let byteLimit: Int
+        let canDownload: Bool
+    }
+
     private var consecutiveUnplayableFailures = 0
     private var libraryOnlyPolicy = false
     private var libraryReportingActive = false
@@ -76,7 +87,8 @@ final class PlaybackController: ObservableObject {
     init(engine: any PlaybackEngining, resolver: any PlaybackStreamResolving,
          audioSession: any PlaybackAudioSession, remote: any PlaybackRemoteControlling,
          store: any PlaybackStateStoring, networkMonitor: any PlaybackNetworkMonitoring,
-         cache: PlaybackCache? = nil, reporting: PlaybackReporting? = nil,
+         cache: PlaybackCache? = nil, preloadCache: PlaybackPreloadCache? = nil,
+         reporting: PlaybackReporting? = nil,
          podcasts: any PodcastPlaybackServing = PodcastsAPI(),
          verifySession: @escaping (DeviceSession) async -> Void) {
         self.engine = engine
@@ -87,6 +99,7 @@ final class PlaybackController: ObservableObject {
         self.networkMonitor = networkMonitor
         self.verifySession = verifySession
         self.cache = cache
+        self.preloadCache = preloadCache
         self.reporting = reporting
         self.podcasts = podcasts
         qualityPreferences = store.loadQualities()
@@ -103,6 +116,7 @@ final class PlaybackController: ObservableObject {
     deinit {
         sessionTask?.cancel()
         loadTask?.cancel()
+        localHandoffTask?.cancel()
         prefetchTask?.cancel()
         progressTask?.cancel()
     }
@@ -140,6 +154,7 @@ final class PlaybackController: ObservableObject {
         podcastProgressSaveFailed = false
         suspendedMusicPosition = 0
         engine.setNormalization(normalization)
+        let previousScope = scope
         session = newSession
         libraryOnlyPolicy = false
         reporting?.update(session: newSession, online: network != .unavailable)
@@ -155,6 +170,10 @@ final class PlaybackController: ObservableObject {
         phase = .idle
         publishMetadata()
 
+        if previousScope != scope, let preloadCache {
+            await preloadCache.retain([], byteLimit: buffering.byteLimit)
+            guard session == newSession else { return }
+        }
         guard let scope, let saved = store.load(for: scope) else { return }
         guard let tracks = try? await tracks(), !Task.isCancelled, session == newSession,
               !queueReadyForPersistence else { return }
@@ -376,7 +395,10 @@ final class PlaybackController: ObservableObject {
         let old = preferredQuality
         qualityPreferences = qualities
         store.saveQualities(qualities)
-        if old != preferredQuality { reloadForQualityChange() }
+        if old != preferredQuality {
+            reloadForQualityChange()
+            prefetchUpcoming()
+        }
     }
 
     func setBuffering(_ preference: PlaybackBuffering) {
@@ -408,6 +430,7 @@ final class PlaybackController: ObservableObject {
         }
         if loaded {
             startEngine()
+            if network == .unavailable { handOffToLocalStream() }
         } else {
             loadCurrent()
         }
@@ -517,7 +540,7 @@ final class PlaybackController: ObservableObject {
         didSelect(autoplay: wantsPlayback)
     }
 
-    private func loadCurrent() {
+    private func loadCurrent(using localStream: PlaybackStream? = nil) {
         let episode = podcast?.episode
         let item = queue.current?.item
         guard episode != nil || item != nil else { return }
@@ -527,6 +550,7 @@ final class PlaybackController: ObservableObject {
         let quality = preferredQuality
         phase = .loading
         publishMetadata()
+        prefetchUpcoming()
 
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -534,12 +558,12 @@ final class PlaybackController: ObservableObject {
                 let stream: PlaybackStream
                 if let episode {
                     stream = try await podcasts.stream(episode: episode, session: session)
-                } else if let track = item?.libraryTrack {
-                    if let cache { await cache.resize(to: buffering.byteLimit) }
-                    stream = try await resolver.resolve(track: track, quality: quality, session: session)
-                } else if let song = item?.catalogSong {
-                    guard !libraryOnlyPolicy else { throw CatalogAPIError.libraryOnly }
-                    stream = try await resolver.resolve(catalogSong: song, quality: quality, session: session)
+                } else if let item {
+                    if let localStream {
+                        stream = localStream
+                    } else {
+                        stream = try await resolveMusic(item, quality: quality, session: session)
+                    }
                 } else {
                     return
                 }
@@ -563,7 +587,56 @@ final class PlaybackController: ObservableObject {
             } catch {
                 guard loadGeneration == generation, !Task.isCancelled else { return }
                 if item?.catalogSong != nil, isSkippableCatalogFailure(error), skipFailedCatalogItem() { return }
-                fail(.from(error))
+                let failure = PlaybackFailure.from(error)
+                if failure == .network, episode == nil, !loadedFromDisk, wantsPlayback {
+                    handOffToLocalStream(afterNetworkFailure: true)
+                } else {
+                    fail(failure)
+                }
+            }
+        }
+    }
+
+    private func resolveMusic(_ item: PlaybackItem, quality: PlaybackQuality,
+                              session: DeviceSession) async throws -> PlaybackStream {
+        if item.catalogSong != nil, libraryOnlyPolicy { throw CatalogAPIError.libraryOnly }
+        let offline = network == .unavailable
+        if let stream = await resolver.localStream(for: item, quality: quality, session: session,
+                                                   allowAlternateQuality: offline) { return stream }
+        try Task.checkCancellation()
+
+        switch item {
+        case .library(let track):
+            if let cache { await cache.resize(to: buffering.byteLimit) }
+            return try await resolver.resolve(track: track, quality: quality, session: session)
+        case .catalog(let song):
+            return try await resolver.resolve(catalogSong: song, quality: quality, session: session)
+        }
+    }
+
+    private func handOffToLocalStream(afterNetworkFailure: Bool = false) {
+        guard podcast == nil, wantsPlayback, !loadedFromDisk, let item = queue.current?.item, let session,
+              !libraryOnlyPolicy || item.catalogSong == nil else {
+            if afterNetworkFailure { fail(.network) }
+            return
+        }
+        streamFailedDuringHandoff = streamFailedDuringHandoff || afterNetworkFailure
+        guard localHandoffTask == nil else { return }
+        let generation = loadGeneration
+        let quality = preferredQuality
+        let resolver = resolver
+        localHandoffTask = Task { [weak self] in
+            let stream = await resolver.localStream(for: item, quality: quality, session: session,
+                                                    allowAlternateQuality: true)
+            guard let self, !Task.isCancelled, loadGeneration == generation else { return }
+            localHandoffTask = nil
+            let failed = streamFailedDuringHandoff
+            streamFailedDuringHandoff = false
+            guard wantsPlayback, !loadedFromDisk else { return }
+            if let stream {
+                loadCurrent(using: stream)
+            } else if failed {
+                fail(.network)
             }
         }
     }
@@ -591,6 +664,9 @@ final class PlaybackController: ObservableObject {
         loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil
+        localHandoffTask?.cancel()
+        localHandoffTask = nil
+        streamFailedDuringHandoff = false
         loaded = false
         loadedFromDisk = false
         streamQuality = nil
@@ -606,6 +682,7 @@ final class PlaybackController: ObservableObject {
         phase = .failed(failure)
         persist()
         publishMetadata()
+        prefetchUpcoming()
         if failure == .unauthorized, let session {
             Task { await verifySession(session) }
         }
@@ -658,6 +735,10 @@ final class PlaybackController: ObservableObject {
             if let duration { position = duration }
             persist()
         case let .failed(failure):
+            if failure == .network {
+                handOffToLocalStream(afterNetworkFailure: true)
+                return
+            }
             if queue.current?.item.catalogSong != nil,
                isSkippableCatalogFailure(failure), skipFailedCatalogItem() { return }
             fail(failure)
@@ -746,16 +827,21 @@ final class PlaybackController: ObservableObject {
         network = path
         reporting?.update(session: session, online: path != .unavailable)
         if previous != path { cancelPrefetch() }
-        guard path != .unavailable else { return }
+        guard path != .unavailable else {
+            if previous != path {
+                prefetchUpcoming()
+                handOffToLocalStream()
+            }
+            return
+        }
         lastConnectedNetwork = path
         if previous == .unavailable, let session { flushPodcastProgress(for: session) }
         if resumeAfterNetworkFailure, previous == .unavailable {
             play()
         } else if oldQuality != preferredQuality {
             reloadForQualityChange()
-        } else {
-            prefetchUpcoming()
         }
+        prefetchUpcoming()
         publishMetadata()
     }
 
@@ -833,40 +919,40 @@ final class PlaybackController: ObservableObject {
 
     private func cancelPrefetch() {
         prefetchTask?.cancel()
-        prefetchTask = nil
-        prefetchedPlan = []
+        preloadPlan = nil
     }
 
     private func prefetchUpcoming() {
-        guard podcast == nil, phase == .playing, let cache, let session else { return }
-        let upcoming = buffering.upcomingItems(in: queue, on: network)
-        let warmOnly = upcoming.isEmpty && network != .unavailable &&
-            (network != .cellular || buffering.readAheadOnCellular) && preferredQuality != .original
-        let next = warmOnly ? queue.next(automatic: true) : nil
-        let nextItem = next.flatMap { id in queue.entries.first { $0.id == id }?.item }
-        let planned = nextItem.flatMap { $0 == queue.current?.item ? nil : [$0] } ?? upcoming
-        guard planned != prefetchedPlan else { return }
+        guard let preloadCache, let session else { return }
+        let plan = PreloadPlan(
+            items: queue.preloadItems.filter { !libraryOnlyPolicy || $0.catalogSong == nil },
+            quality: preferredQuality, byteLimit: buffering.byteLimit,
+            canDownload: podcast == nil && phase == .playing && network != .unavailable
+        )
+        guard plan != preloadPlan else { return }
+
+        let previous = prefetchTask
         cancelPrefetch()
-        prefetchedPlan = planned
-        let quality = preferredQuality
+        preloadPlan = plan
         let resolver = resolver
-        let byteLimit = buffering.byteLimit
+        let keys = plan.items.map { PlaybackPreloadCache.Key(session: session, item: $0, quality: plan.quality) }
         prefetchTask = Task(priority: .utility) {
-            await cache.resize(to: byteLimit)
-            for item in planned {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await preloadCache.retain(keys, byteLimit: plan.byteLimit)
+            guard plan.canDownload else { return }
+
+            for (item, key) in zip(plan.items, keys) {
                 guard !Task.isCancelled else { return }
-                if warmOnly {
-                    if let track = item.libraryTrack {
-                        try? await resolver.warmTranscode(track: track, quality: quality, session: session)
-                    }
-                    continue
-                }
-                if let track = item.libraryTrack {
-                    guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
-                          stream.fileURL == nil, !Task.isCancelled else { continue }
-                    _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
-                } else if let song = item.catalogSong, !libraryOnlyPolicy {
-                    try? await resolver.prefetch(catalogSong: song, session: session)
+                if await preloadCache.contains(key) { continue }
+                do {
+                    try Task.checkCancellation()
+                    let stream = try await resolver.preloadSource(for: item, quality: plan.quality, session: session)
+                    try await preloadCache.store(stream, for: key)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // A failed preload should neither interrupt playback nor block later songs.
                 }
             }
         }

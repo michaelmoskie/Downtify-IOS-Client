@@ -96,6 +96,34 @@ final class PlaybackQueueTests: XCTestCase {
         XCTAssertTrue(queue.entries.allSatisfy { $0.item.catalogSong == nil })
     }
 
+    func testPreloadWindowUsesDistinctMediaAndStopsAfterFiveUpcomingSongs() throws {
+        var queue = PlaybackQueue()
+        XCTAssertTrue(queue.preloadItems.isEmpty)
+        let first = libraryTrack(id: "same-id", file: "original.mp3")
+        let updated = libraryTrack(id: "same-id", file: "updated.mp3")
+        let catalog = try catalogSong(#"{"source":"youtube","song_id":"same-id","name":"Catalog"}"#)
+        queue.replace([.library(first), .library(updated), .catalog(catalog)], startingAt: 0)
+        XCTAssertEqual(queue.preloadItems, [.library(first), .catalog(catalog)])
+
+        let extra = (1...6).map { libraryTrack(id: "track-\($0)", file: "song.mp3") }
+        queue.append(extra)
+        XCTAssertEqual(queue.preloadItems, [.library(first), .catalog(catalog)] + extra.prefix(4).map(PlaybackItem.library))
+    }
+
+    func testPreloadWindowUsesShuffledOrderAndRepeatMode() {
+        let tracks = (1...4).map { libraryTrack(id: "track-\($0)", file: "song.mp3") }
+        var queue = PlaybackQueue()
+        queue.replace(tracks, startingAt: 0)
+        queue.setShuffle(true)
+        let order = queue.order
+        queue.select(order[2].id)
+        XCTAssertEqual(queue.preloadItems, Array(order[2...]).map(\.item))
+        queue.repeatMode = .all
+        XCTAssertEqual(queue.preloadItems, (Array(order[2...]) + order.prefix(2)).map(\.item))
+        queue.repeatMode = .one
+        XCTAssertEqual(queue.preloadItems, [order[2].item])
+    }
+
     private func catalogSong(_ json: String) throws -> CatalogSong {
         try JSONDecoder().decode(CatalogSong.self, from: Data(json.utf8))
     }

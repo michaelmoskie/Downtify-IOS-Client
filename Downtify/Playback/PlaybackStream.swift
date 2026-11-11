@@ -18,7 +18,7 @@ enum PlaybackCodec: String, Codable, CaseIterable, Sendable {
     }
 }
 
-enum PlaybackQuality: Equatable, Codable, Sendable {
+enum PlaybackQuality: Hashable, Codable, Sendable {
     case original
     case transcoded(PlaybackCodec, bitrate: Int)
 }
@@ -90,33 +90,62 @@ struct PlaybackStream: Sendable {
 }
 
 protocol PlaybackStreamResolving {
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream?
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
 }
 
 extension PlaybackStreamResolving {
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {}
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream? { nil }
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
         throw PlaybackFailure.invalidStream
     }
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {}
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        throw PlaybackFailure.invalidStream
+    }
 }
 
 struct PlaybackStreamResolver: PlaybackStreamResolving {
     private let transport: any HTTPDataLoading
     private let cache: PlaybackCache?
     private let offline: (any OfflinePlaybackProviding)?
+    private let preloadCache: PlaybackPreloadCache?
 
     init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), cache: PlaybackCache? = nil,
-         offline: (any OfflinePlaybackProviding)? = nil) {
+         offline: (any OfflinePlaybackProviding)? = nil, preloadCache: PlaybackPreloadCache? = nil) {
         self.transport = transport
         self.cache = cache
         self.offline = offline
+        self.preloadCache = preloadCache
     }
 
-    func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream? {
+        if let track = item.libraryTrack,
+           let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
+        guard item.catalogSong?.source.lowercased() != "library", let preloadCache else { return nil }
+        let key = PlaybackPreloadCache.Key(session: session, item: item, quality: quality)
+        return await preloadCache.stream(for: key, allowAlternateQuality: allowAlternateQuality)
+    }
+
+    func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        try await resolve(track: track, quality: quality, session: session, useBlockCache: true)
+    }
+
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        switch item {
+        case .library(let track):
+            return try await resolve(track: track, quality: quality, session: session, useBlockCache: false)
+        case .catalog(let song):
+            return try await resolve(catalogSong: song, quality: quality, session: session, useBlockCache: false)
+        }
+    }
+
+    private func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession,
+                         useBlockCache: Bool) async throws -> PlaybackStream {
         if let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
         let (client, address, choices, _) = try await verifiedServer(for: session)
         let quality = choices.contains(preference) ? preference : .original
@@ -131,13 +160,13 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
             let (data, current) = try await source.fetch(range, validator: response.validator)
             guard current.length == response.length, current.mediaType == response.mediaType,
-                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+                  current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data
         }
         return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
                               quality: response.servedOriginal ? .original : quality, availableQualities: choices) { range in
             guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
-            if let cache {
+            if useBlockCache, let cache {
                 return try await cache.read(range, representation: representation, fetch: fetch)
             }
             return try await fetch(range)
@@ -145,6 +174,11 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     }
 
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        try await resolve(catalogSong: catalogSong, quality: quality, session: session, useBlockCache: true)
+    }
+
+    private func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession,
+                         useBlockCache: Bool) async throws -> PlaybackStream {
         guard catalogSong.source.lowercased() != "library" else { throw CatalogAPIError.libraryOnly }
         let (client, address, choices, libraryOnly) = try await verifiedServer(for: session)
         guard !libraryOnly else { throw CatalogAPIError.libraryOnly }
@@ -163,41 +197,15 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
             let (data, current) = try await source.fetch(range, validator: response.validator)
             guard current.length == response.length, current.mediaType == response.mediaType,
-                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+                  current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data
         }
         return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
                               quality: .original, availableQualities: choices) { range in
             guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
-            if let cache { return try await cache.read(range, representation: representation, fetch: fetch) }
+            if useBlockCache, let cache { return try await cache.read(range, representation: representation, fetch: fetch) }
             return try await fetch(range)
         }
-    }
-
-    func prefetch(catalogSong: CatalogSong, session: DeviceSession) async throws {
-        guard catalogSong.source.lowercased() != "library" else { return }
-        let (client, address, _, libraryOnly) = try await verifiedServer(for: session)
-        guard !libraryOnly else { return }
-        let (videoID, _) = try await catalogVideo(catalogSong, session: session)
-        try Task.checkCancellation()
-        var request = URLRequest(url: address.url(for: "/api/stream/prefetch"))
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(CatalogPrefetchBody(videoID: videoID))
-        _ = try await client.send(request, to: address)
-    }
-
-    func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {
-        guard case .transcoded = quality,
-              await offline?.offlineStream(trackID: track.id, session: session) == nil else { return }
-        let (client, address, choices, _) = try await verifiedServer(for: session)
-        guard choices.contains(quality) else { return }
-        let url = try Self.streamURL(address: address, trackID: track.id, quality: quality)
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 90)
-        request.httpMethod = "HEAD"
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        _ = try await client.send(request, to: address)
     }
 
     private func verifiedServer(for session: DeviceSession) async throws -> (APIClient, ServerAddress, [PlaybackQuality], Bool) {
@@ -289,11 +297,6 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         guard let type = UTType(filenameExtension: ext) else { throw PlaybackFailure.unsupportedFormat }
         return (type.identifier, ext)
     }
-}
-
-private struct CatalogPrefetchBody: Encodable {
-    let videoID: String
-    enum CodingKeys: String, CodingKey { case videoID = "video_id" }
 }
 
 struct RangeSource {
