@@ -147,6 +147,7 @@ struct ServerDownloadQueue {
         }
         let client = APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
         let server = try await client.serverInfo(at: address)
+        try Task.checkCancellation()
         guard server.serverID == session.serverID else { throw PlaybackFailure.differentServer }
         guard !server.isLibraryOnly else { throw CatalogAPIError.libraryOnly }
         guard var components = URLComponents(url: address.url(for: path), resolvingAgainstBaseURL: false) else {

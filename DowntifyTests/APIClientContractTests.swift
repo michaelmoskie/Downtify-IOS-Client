@@ -478,6 +478,24 @@ final class ServerDownloadQueueTests: XCTestCase {
         XCTAssertFalse(ServerDownloadQueue.isYouTubeMusicAlbumURL("https://music.youtube.com/watch?v=abc"))
     }
 
+    func testCancellationDuringServerInfoDoesNotSendDownloadMutation() async throws {
+        let loader = DelayedServerInfoLoader(body: serverInfo)
+        let song = try decodeSong(#"{"source":"youtube","song_id":"yt-1","name":"One","artists":["A"],"url":"https://music.youtube.com/watch?v=yt-1"}"#)
+        let task = Task { try await ServerDownloadQueue(transport: loader).requestTrack(song: song, session: makeSession()) }
+
+        await fulfillment(of: [loader.started], timeout: 2)
+        task.cancel()
+        loader.finishServerInfo()
+
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled request unexpectedly succeeded")
+        } catch is CancellationError {
+            XCTAssertEqual(loader.requests.count, 1)
+            XCTAssertEqual(loader.requests.first?.url?.path, "/music/api/server/info")
+        }
+    }
+
     func testQueueJobsDecodeCurrentAndLegacySongFields() throws {
         let data = Data(#"[{"song":{"song_id":"new-id","name":"Current","artists":["A","B"]},"status":"running","progress":0.5},{"song":{"id":"old-id","title":"Legacy","artist":"C"},"status":"done"}]"#.utf8)
 
@@ -514,4 +532,27 @@ private final class QueueContractLoader: HTTPDataLoading {
         let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
         return (Data(responses.removeFirst().utf8), response)
     }
+}
+
+private final class DelayedServerInfoLoader: HTTPDataLoading {
+    let started = XCTestExpectation(description: "server-info request started")
+    private let body: String
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var requests: [URLRequest] = []
+
+    init(body: String) { self.body = body }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if requests.count == 1 {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                started.fulfill()
+            }
+        }
+        let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (Data(body.utf8), response)
+    }
+
+    func finishServerInfo() { continuation?.resume() }
 }
