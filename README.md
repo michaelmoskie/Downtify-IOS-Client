@@ -11,6 +11,17 @@ Downtify is a SwiftUI iPhone and iPad app targeting iOS 17 and later. It include
   <img src="screenshots/app-store/04-queue.png" alt="Play queue" width="24%">
 </p>
 
+## Install the beta with TestFlight
+
+To try Downtify on an iPhone or iPad running iOS or iPadOS 17 or later:
+
+1. Install Apple's free [TestFlight app](https://apps.apple.com/app/testflight/id899247664) on your device.
+2. On that device, open the [Downtify public beta invitation](https://testflight.apple.com/join/Uej1Yta5).
+3. In TestFlight, tap **Accept**, then **Install**. If you have already joined, tap **Update** or **Open** instead.
+4. Open Downtify and connect to a reachable Downtify server instance to use the server-backed features.
+
+TestFlight shows whether a compatible beta build is available for your device. See [Apple's TestFlight instructions](https://testflight.apple.com/) for more help with installing and updating beta apps.
+
 ## Build and test on a Mac
 
 Open `Downtify.xcodeproj` with the installed Xcode version. Install an iOS simulator runtime in Xcode Settings, choose the shared **Downtify** scheme and an iPhone or iPad simulator, then use **Product → Run** and **Product → Test**. Simulator builds do not need a development team.
