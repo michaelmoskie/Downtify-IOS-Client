@@ -256,6 +256,7 @@ private struct PodcastEpisodeView: View {
             .padding(DowntifyStyle.Space.regular)
             .frame(maxWidth: .infinity)
         }
+        .downtifyScrollEndClearance()
         .navigationTitle("Episode")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear {
