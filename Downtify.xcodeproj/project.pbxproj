@@ -5,6 +5,8 @@
 	};
 	objectVersion = 56;
 	objects = {
+		0000000000000000000000C0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDockScrollTests.swift; sourceTree = "<group>"; };
+		0000000000000000000000C1 = { isa = PBXBuildFile; fileRef = 0000000000000000000000C0; };
 		000000000000000000000098 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPresentationModel.swift; sourceTree = "<group>"; };
 		000000000000000000000099 = { isa = PBXBuildFile; fileRef = 000000000000000000000098; };
 		0000000000000000000000A0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDownloadPresentationModel.swift; sourceTree = "<group>"; };
@@ -484,6 +486,7 @@
 				00000000000000000000002B,
 				000000000000000000000033,
 				00000000000000000000005B,
+				0000000000000000000000C0,
 			);
 			sourceTree = "<group>";
 			path = DowntifyTests;
@@ -625,6 +628,7 @@
 				00000000000000000000009F,
 				000000000000000000000058,
 				00000000000000000000005C,
+				0000000000000000000000C1,
 				000000000000000000000042,
 				000000000000000000000050,
 				00000000000000000000000A,

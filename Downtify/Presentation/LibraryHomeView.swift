@@ -158,6 +158,7 @@ struct LibraryHomeView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .downtifyScrollEndClearance()
         .refreshable { await refresh() }
         .background(palette.background.ignoresSafeArea())
         .navigationTitle(title)
@@ -613,6 +614,7 @@ private struct LibraryContextView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .downtifyScrollEndClearance()
         .refreshable {
             async let music: Void = library.refresh()
             async let lists: Void = collections.refresh()

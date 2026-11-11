@@ -26,6 +26,7 @@ struct DownloadsView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .downtifyScrollEndClearance()
         .background(palette.background.ignoresSafeArea())
         .navigationTitle("Downloads")
         .toolbarBackground(palette.background, for: .navigationBar)

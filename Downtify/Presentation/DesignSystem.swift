@@ -58,6 +58,11 @@ extension View {
         frame(minWidth: DowntifyStyle.minimumControlSize, minHeight: DowntifyStyle.minimumControlSize)
             .contentShape(Rectangle())
     }
+
+    /// Leaves room to scroll the final action clear of the mini player.
+    func downtifyScrollEndClearance() -> some View {
+        contentMargins(.bottom, DowntifyStyle.Space.scrollEnd, for: .scrollContent)
+    }
 }
 
 /// Shared semantic colors, spacing, and surfaces used throughout the app.
@@ -73,6 +78,7 @@ enum DowntifyStyle {
         static let regular: CGFloat = 16
         static let large: CGFloat = 24
         static let section: CGFloat = 36
+        static let scrollEnd: CGFloat = 96
     }
 
     static func adaptive(light: UInt32, dark: UInt32) -> Color {

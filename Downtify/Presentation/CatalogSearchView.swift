@@ -205,6 +205,7 @@ struct CatalogSearchView: View {
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .downtifyScrollEndClearance()
         .background(palette.background)
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -252,6 +253,7 @@ struct CatalogSearchView: View {
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .downtifyScrollEndClearance()
         .background(palette.background)
         .navigationTitle(artist.name)
         .navigationBarTitleDisplayMode(.inline)
