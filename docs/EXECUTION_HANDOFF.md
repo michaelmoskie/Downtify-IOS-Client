@@ -1,6 +1,6 @@
 # Execution handoff
 
-Updated 2026-11-09. Tasks 5 and 6 have been integrated and verified with a simulator build and test suite. See `git status` for the current worktree state.
+Updated 2026-11-11. Tasks 5 and 6 have been integrated; verification of the integrated pull request is described below. See `git status` for the current worktree state.
 
 ## Completed work
 
@@ -13,9 +13,7 @@ Updated 2026-11-09. Tasks 5 and 6 have been integrated and verified with a simul
 
 ## Verification status and limits
 
-A generic iOS Simulator build succeeded during the current verification pass. The signed full simulator suite passed **121/121 tests**; log: `/private/tmp/downtify-task6-test-final.log`. The build and fixture-backed tests do not establish live server compatibility or accessibility behavior.
-
-The previously recorded **117/117** signed simulator suite belongs to the Task 4 verification run and its result bundle is `/tmp/DowntifySimulatorTerraSigned/Logs/Test/Test-Downtify-2026.11.09_22-08-46--0500.xcresult` (log: `/private/tmp/task4-test.log`). The current 121-test result supersedes it for this worktree. No credential-backed run against a live Downtify server or accessibility review has been performed. Simulator networking through Safari only established generic connectivity, not app API compatibility.
+The integrated pull request initially recorded a successful iOS Debug build with code signing disabled and no test run. On 2026-11-11, the signed iPhone 18 Pro (iOS 27.0) simulator suite passed 138/138 tests after correcting two test expectations. An earlier Task 6 handoff reported 121/121 signed simulator tests, but its temporary log is no longer available here, so that result cannot be independently verified. A credential-backed live-server run and accessibility review remain outstanding.
 
 ## Remaining work
 

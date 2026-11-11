@@ -292,25 +292,25 @@ struct DownloadsView: View {
 
     private func songActionTitle(for song: CatalogSong) -> String {
         switch serverDownloads.actionState(for: song) {
-        case .submitting: "Requesting…"
-        case .queued: "Queued"
-        case .accepted: "Requested"
-        case .partiallyAccepted: "Partially queued"
-        case .outcomeUnknown: "Check queue"
-        case .failed: "Retry"
-        case .idle: "Download to server"
+        case .submitting: String(localized: "Requesting…")
+        case .queued: String(localized: "Queued")
+        case .accepted: String(localized: "Requested")
+        case .partiallyAccepted: String(localized: "Partially queued")
+        case .outcomeUnknown: String(localized: "Check queue")
+        case .failed: String(localized: "Retry")
+        case .idle: String(localized: "Download to server")
         }
     }
 
     private func albumActionTitle(for url: String) -> String {
         switch serverDownloads.actionState(forAlbumURL: url) {
-        case .submitting: "Requesting…"
-        case .accepted: "Finished"
-        case .partiallyAccepted(let successful, let expected): "\(successful) of \(expected) downloaded"
-        case .outcomeUnknown: "Check queue"
-        case .failed: "Retry"
-        case .queued: "Queued"
-        case .idle: "Download to server"
+        case .submitting: String(localized: "Requesting…")
+        case .accepted: String(localized: "Finished")
+        case .partiallyAccepted(let successful, let expected): String(localized: "\(successful) of \(expected) downloaded")
+        case .outcomeUnknown: String(localized: "Check queue")
+        case .failed: String(localized: "Retry")
+        case .queued: String(localized: "Queued")
+        case .idle: String(localized: "Download to server")
         }
     }
 

@@ -348,7 +348,7 @@ final class APIClientContractTests: XCTestCase {
         } catch let error as APIError {
             XCTAssertEqual(error, .httpStatus(409, retryAfter: nil))
         }
-        XCTAssertEqual(loader.requests.last?.url?.path, "/api/v1/playlists/order")
+        XCTAssertEqual(loader.requests.last?.url?.path, "/music/api/v1/playlists/order")
     }
 
     private func playlistMutationSession() -> DeviceSession {

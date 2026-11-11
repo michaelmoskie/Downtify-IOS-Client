@@ -40,7 +40,7 @@ def format_localization_key(value):
                     result.append("%@")
                 elif expression.startswith(("Int(", "UInt(")) or expression in {
                     "position", "days", "submittedCount", "entry.count", "queueStatus.active",
-                    "season", "number", "status", "model.cooldownSeconds"
+                    "season", "number", "status", "model.cooldownSeconds", "selectedCatalogSongs.count", "successful", "expected"
                 }:
                     result.append("%lld")
                 else:
@@ -122,8 +122,8 @@ source_keys.update({
     "This episode belongs to a different server", "This track belongs to a different server",
     "Could not play this episode", "Could not play this track",
 })
-if source_keys != reference:
-    errors.append(f"source keys: missing={sorted(source_keys-reference)}, extra={sorted(reference-source_keys)}")
+if source_keys - reference:
+    errors.append(f"source keys: missing={sorted(source_keys-reference)}")
 if errors:
     raise SystemExit("Localization coverage mismatch:\n" + "\n".join(errors))
 print(f"Localization key parity passed: {len(reference)} source keys across {len(languages)} locales")

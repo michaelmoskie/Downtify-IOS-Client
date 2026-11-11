@@ -714,9 +714,9 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
         name: String, add: [String]?, remove: [String]?,
         removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?, allowDuplicates: Bool?, session: DeviceSession
     ) async throws {
-        let entries = (removeEntries ?? []).map { "\($0.trackID)@\($0.occurrence)" }.joined(separator: ",")
-        let additions = (add ?? []).joined(separator: ",")
-        let removals = (remove ?? []).joined(separator: ",")
+        let entries = removeEntries.map { $0.map { "\($0.trackID)@\($0.occurrence)" }.joined(separator: ",") } ?? "-"
+        let additions = add.map { $0.joined(separator: ",") } ?? "-"
+        let removals = remove.map { $0.joined(separator: ",") } ?? "-"
         let duplicateFlag = allowDuplicates.map { $0 ? "true" : "false" } ?? "-"
         writes.append("edit:\(name):add=\(additions):remove=\(removals):remove_entries=\(entries):allow_duplicates=\(duplicateFlag)")
         try await pauseOrFail()

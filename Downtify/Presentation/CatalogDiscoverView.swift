@@ -228,7 +228,10 @@ struct CatalogDiscoverView: View {
             case .empty: emptyMessage("No suggestions yet", symbol: "sparkles", detail: "Add or like music, then refresh your recommendations.")
             case .failed(let message), .unavailable(let message): statusMessage(message, symbol: "sparkles", retry: loadDiscover)
             case .loaded(let result), .partial(let result, _):
-                if !result.seeds.isEmpty { Text("Based on \(result.seeds.prefix(4).joined(separator: " · "))").font(.footnote).foregroundStyle(.secondary) }
+                if !result.seeds.isEmpty {
+                    let seeds = result.seeds.prefix(4).joined(separator: " · ")
+                    Text("Based on \(seeds)").font(.footnote).foregroundStyle(.secondary)
+                }
                 ForEach(result.artists.filter { !blockedArtistNames.contains($0.name.lowercased()) }) { artist in
                     HStack {
                             Button { query = artist.name; selectedSection = Section.finder.rawValue; searchFinder() } label: {
