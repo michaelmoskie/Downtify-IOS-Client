@@ -211,7 +211,7 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     }
 
     private func catalogVideo(_ song: CatalogSong, session: DeviceSession) async throws -> (String, Double) {
-        if let direct = Self.validYouTubeID(song.youtubeID) ?? Self.validYouTubeID(song.songID) {
+        if let direct = Self.catalogYouTubeID(song) {
             return (direct, song.duration ?? 0)
         }
         let query = [song.artist, song.title].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -219,13 +219,19 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         guard !query.isEmpty else { throw CatalogAPIError.invalidInput }
         let candidates = try await CatalogAPI(transport: transport).searchSongs(query: query, session: session)
         guard let match = candidates.first(where: { candidate in
-            guard (Self.validYouTubeID(candidate.youtubeID) ?? Self.validYouTubeID(candidate.songID)) != nil else { return false }
+            guard (Self.catalogYouTubeID(candidate)) != nil else { return false }
             guard let wanted = song.duration, let found = candidate.duration else { return true }
             return wanted.isFinite && found.isFinite && abs(wanted - found) <= 10
-        }), let videoID = Self.validYouTubeID(match.youtubeID) ?? Self.validYouTubeID(match.songID) else {
+        }), let videoID = Self.catalogYouTubeID(match) else {
             throw PlaybackFailure.invalidStream
         }
         return (videoID, song.duration ?? match.duration ?? 0)
+    }
+
+    private static func catalogYouTubeID(_ song: CatalogSong) -> String? {
+        if let id = validYouTubeID(song.youtubeID) { return id }
+        guard song.source == "youtube_music" else { return nil }
+        return validYouTubeID(song.songID)
     }
 
     private static func validYouTubeID(_ value: String?) -> String? {

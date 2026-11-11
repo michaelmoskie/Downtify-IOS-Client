@@ -43,6 +43,21 @@ final class CatalogPlaybackStreamTests: XCTestCase {
         XCTAssertEqual(search.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
     }
 
+    func testAmbiguousProviderIDUsesSearchForStreamingAndPrefetch() async throws {
+        let loader = CatalogPlaybackLoader()
+        let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
+                                    deviceID: "device", username: nil, role: "CLIENT", token: "secret", allowsInsecureHTTP: false)
+        let song = try decodeSong(#"{"source":"deezer","song_id":"12345678901","name":"Roads","artist":"Portishead","duration":123}"#)
+        let resolver = PlaybackStreamResolver(transport: loader)
+        _ = try await resolver.resolve(catalogSong: song, quality: .original, session: session)
+        try await resolver.prefetch(catalogSong: song, session: session)
+        XCTAssertEqual(loader.requests.filter { $0.url?.path == "/music/api/songs/search" }.count, 2)
+        let stream = try XCTUnwrap(loader.requests.first { $0.url?.path == "/music/api/stream/file" })
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(stream.url), resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "abcdefghijk")
+        let prefetch = try XCTUnwrap(loader.requests.first { $0.url?.path == "/music/api/stream/prefetch" })
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: XCTUnwrap(prefetch.httpBody)) as? [String: String], ["video_id": "abcdefghijk"])
+    }
+
     func testServerMismatchStopsBeforeCatalogBearerRequest() async throws {
         let loader = CatalogPlaybackLoader(serverID: "other")
         let session = DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Test",
