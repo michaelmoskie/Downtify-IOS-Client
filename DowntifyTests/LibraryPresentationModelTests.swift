@@ -122,6 +122,19 @@ final class LibraryPresentationModelTests: XCTestCase {
         continuation.finish()
     }
 
+    func testLibraryOnlyDiscoverKeepsArtistsAndDisablesCollections() async throws {
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = CatalogPresentationModel(api: CatalogServingStub(libraryOnly: true, discoverPartial: true), sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.policyState == .ready }
+        model.loadDiscover(library: [], albums: [], playlistNames: [], playlistIDs: [], shown: [])
+        await waitUntil { if case .partial = model.discoverArtistsState { return true }; return false }
+        if case .unavailable = model.deezerCollectionsState {} else { XCTFail("Expected Deezer unavailable") }
+        if case .unavailable = model.spotifyCollectionsState {} else { XCTFail("Expected Spotify unavailable") }
+        continuation.finish()
+    }
+
     func testDiscoverSectionsKeepPartialSuccessWhenAnotherProviderFails() async throws {
         let session = makeSession()
         let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()

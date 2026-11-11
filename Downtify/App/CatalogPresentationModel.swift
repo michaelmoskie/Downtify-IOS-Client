@@ -265,6 +265,14 @@ final class CatalogPresentationModel: ObservableObject {
         let api = self.api
         startRequest("discover_artists", session: session, operation: { try await api.discover(library: library, session: session) },
                      isEmpty: { $0.artists.isEmpty }, isPartial: { $0.partial }) { self.discoverArtistsState = $0 }
+        guard externalCatalogAvailable else {
+            cancelRequests(withPrefix: "deezer_collections")
+            cancelRequests(withPrefix: "spotify_collections")
+            let message = "Provider collections are unavailable in library-only mode."
+            deezerCollectionsState = .unavailable(message: message)
+            spotifyCollectionsState = .unavailable(message: message)
+            return
+        }
         startRequest("deezer_collections", session: session, operation: {
             try await api.deezerCollections(library: library, albums: albums, playlistNames: playlistNames, session: session)
         }, isEmpty: { $0.albums.isEmpty && $0.moreAlbums.isEmpty && $0.playlists.isEmpty }, isPartial: { $0.partial }) {
