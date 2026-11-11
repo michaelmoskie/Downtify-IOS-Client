@@ -252,13 +252,29 @@ final class ServerDownloadPresentationModel: ObservableObject {
     }
 
     private func reconcileActions(with jobs: [ServerDownloadQueue.Job]) {
-        for job in jobs {
-            guard let id = job.song.id else { continue }
-            let keys = actionStates.keys.filter { key in
-                key == "library:\(id)" || key.hasSuffix(":\(id)")
+        for key in Array(actionStates.keys) {
+            guard actionStates[key] != .submitting else { continue }
+            let matches = jobs.filter { job in
+                guard let id = job.song.id else { return false }
+                return key == "library:\(id)" || key.hasSuffix(":\(id)")
             }
-            keys.forEach { actionStates[$0] = .queued(jobID: job.id) }
+            if let state = Self.reconciledState(for: matches) { actionStates[key] = state }
         }
+    }
+
+    static func reconciledState(for jobs: [ServerDownloadQueue.Job]) -> ServerDownloadActionState? {
+        guard !jobs.isEmpty else { return nil }
+        let active = ["queued", "pending", "running", "downloading", "processing"]
+        if let job = jobs.first(where: { active.contains($0.status.lowercased()) }) {
+            return .queued(jobID: job.id)
+        }
+        if jobs.contains(where: { ["done", "completed", "complete", "success", "succeeded"].contains($0.status.lowercased()) }) {
+            return .accepted
+        }
+        if let job = jobs.first(where: { ["failed", "error", "cancelled", "canceled"].contains($0.status.lowercased()) }) {
+            return .failed(job.message.flatMap { $0.isEmpty ? nil : $0 } ?? "The server download failed.")
+        }
+        return .outcomeUnknown
     }
 
     private func message(for error: Error) -> String {

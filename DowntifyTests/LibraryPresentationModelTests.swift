@@ -3,6 +3,19 @@ import XCTest
 
 @MainActor
 final class LibraryPresentationModelTests: XCTestCase {
+    func testServerDownloadReconciliationUsesJobStatusAndActiveJobsTakePrecedence() throws {
+        func jobs(_ statuses: [String]) throws -> [ServerDownloadQueue.Job] {
+            let json = statuses.map { "{\"song\":{\"id\":\"song\"},\"status\":\"\($0)\"}" }.joined(separator: ",")
+            return try JSONDecoder().decode([ServerDownloadQueue.Job].self, from: Data("[\(json)]".utf8))
+        }
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["running"])), .queued(jobID: "song"))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["done"])), .accepted)
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["failed"])), .failed("The server download failed."))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["unexpected"])), .outcomeUnknown)
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["failed", "running"])), .queued(jobID: "song"))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: []), nil)
+    }
+
     func testLibraryOrderingAndSearchCoverTitleArtistAndAlbum() {
         let tracks = [
             makeTrack("z", title: "Zebra", artist: "Ada", album: "Night Songs"),
