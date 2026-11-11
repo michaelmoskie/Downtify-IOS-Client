@@ -32,7 +32,7 @@ struct CatalogDiscoverView: View {
     var body: some View {
         VStack(spacing: 14) {
             Picker("Explore", selection: $selectedSection) {
-                ForEach(Section.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                ForEach(Section.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0.rawValue) }
             }
             .pickerStyle(.segmented)
             .accessibilityLabel("Discovery section")
