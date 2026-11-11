@@ -13,7 +13,7 @@ Updated 2026-11-11. Tasks 5 and 6 have been integrated; verification of the inte
 
 ## Verification status and limits
 
-The integrated pull request initially recorded a successful iOS Debug build with code signing disabled and no test run. On 2026-11-11, the signed iPhone 18 Pro (iOS 27.0) simulator suite passed 138/138 tests after correcting two test expectations. An earlier Task 6 handoff reported 121/121 signed simulator tests, but its temporary log is no longer available here, so that result cannot be independently verified. A credential-backed live-server run and accessibility review remain outstanding.
+On 2026-11-11, the signed iPhone 18 Pro (iOS 27.0) simulator suite passed 141/141 tests on the integrated PR branch after the Copilot review fixes. The result is recorded in the Xcode test result bundle `Test-Downtify-2026.11.11_00-36-11--0500.xcresult`. An earlier Task 6 handoff reported 121/121 signed simulator tests, but its temporary log is no longer available here, so that result cannot be independently verified. A credential-backed live-server run and accessibility review remain outstanding.
 
 ## Remaining work
 
