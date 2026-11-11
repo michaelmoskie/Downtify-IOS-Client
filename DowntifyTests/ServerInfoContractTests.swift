@@ -146,6 +146,31 @@ final class ServerInfoContractTests: XCTestCase {
         XCTAssertEqual(artists.first?["liked"] as? Int, 2)
     }
 
+    func testCollectionRequestsRespectLibraryOnlyPolicy() async throws {
+        for libraryOnly in [true, false] {
+            let info = """
+            {"product":"Downtify","api_version":1,"server_id":"srv","library_only":\(libraryOnly),"capabilities":{"discover":true}}
+            """
+            let response = #"{"albums":[],"more_albums":[],"playlists":[],"partial":false}"#
+            for spotify in [false, true] {
+                let loader = CatalogSequenceLoader(bodies: libraryOnly ? [info] : [info, response])
+                let api = CatalogAPI(transport: loader)
+                do {
+                    if spotify {
+                        _ = try await api.spotifyCollections(library: [], albums: [], playlistIDs: [], shown: [], session: catalogSession())
+                    } else {
+                        _ = try await api.deezerCollections(library: [], albums: [], playlistNames: [], session: catalogSession())
+                    }
+                    XCTAssertFalse(libraryOnly)
+                } catch let error as CatalogAPIError {
+                    XCTAssertTrue(libraryOnly)
+                    XCTAssertEqual(error, .libraryOnly)
+                }
+                XCTAssertEqual(loader.requests.count, libraryOnly ? 1 : 2)
+            }
+        }
+    }
+
     private func catalogSession() -> DeviceSession {
         DeviceSession(baseAddress: "https://example.test/music", serverID: "srv", serverName: "Music",
                       deviceID: "phone", username: "alice", role: "user", token: "secret",

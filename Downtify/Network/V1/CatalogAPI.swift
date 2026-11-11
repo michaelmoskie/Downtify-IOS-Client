@@ -170,13 +170,13 @@ struct CatalogAPI: CatalogServing {
     func deezerCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistNames: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
         let body = CollectionsBody(library: library, albums: albums, playlistNames: playlistNames)
         return try await post(CatalogCollectionsResults.self, path: "/api/discover/collections/deezer", body: body, session: session,
-                              requiresDiscoverCapability: true)
+                              requiresExternalCatalog: true, requiresDiscoverCapability: true)
     }
 
     func spotifyCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistIDs: [String], shown: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
         let body = SpotifyCollectionsBody(library: library, albums: albums, playlistIDs: playlistIDs, shown: shown)
         return try await post(CatalogCollectionsResults.self, path: "/api/discover/collections/spotify", body: body, session: session,
-                              requiresDiscoverCapability: true)
+                              requiresExternalCatalog: true, requiresDiscoverCapability: true)
     }
 
     func blockedArtists(session: DeviceSession) async throws -> [CatalogBlockedArtist] {
@@ -209,12 +209,13 @@ struct CatalogAPI: CatalogServing {
 
     private func post<Value: Decodable, Body: Encodable>(
         _ type: Value.Type, path: String, body: Body, session: DeviceSession,
-        requiresDiscoverCapability: Bool = false
+        requiresExternalCatalog: Bool = false, requiresDiscoverCapability: Bool = false
     ) async throws -> Value {
         let encoded: Data
         do { encoded = try JSONEncoder().encode(body) }
         catch { throw APIError.decodingFailure }
         let data = try await request(path: path, method: "POST", body: encoded, session: session,
+                                     requiresExternalCatalog: requiresExternalCatalog,
                                      requiresDiscoverCapability: requiresDiscoverCapability)
         do { return try JSONDecoder().decode(type, from: data) }
         catch { throw APIError.decodingFailure }
