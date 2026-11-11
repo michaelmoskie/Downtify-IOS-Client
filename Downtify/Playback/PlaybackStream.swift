@@ -18,7 +18,7 @@ enum PlaybackCodec: String, Codable, CaseIterable, Sendable {
     }
 }
 
-enum PlaybackQuality: Equatable, Codable, Sendable {
+enum PlaybackQuality: Hashable, Codable, Sendable {
     case original
     case transcoded(PlaybackCodec, bitrate: Int)
 }
@@ -116,7 +116,21 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         self.offline = offline
     }
 
-    func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+    func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        try await resolve(track: track, quality: quality, session: session, useBlockCache: true)
+    }
+
+    func preloadSource(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        switch item {
+        case .library(let track):
+            return try await resolve(track: track, quality: quality, session: session, useBlockCache: false)
+        case .catalog(let song):
+            return try await resolve(catalogSong: song, quality: quality, session: session, useBlockCache: false)
+        }
+    }
+
+    private func resolve(track: LibraryTrack, quality preference: PlaybackQuality, session: DeviceSession,
+                         useBlockCache: Bool) async throws -> PlaybackStream {
         if let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
         let (client, address, choices, _) = try await verifiedServer(for: session)
         let quality = choices.contains(preference) ? preference : .original
@@ -131,13 +145,13 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
             let (data, current) = try await source.fetch(range, validator: response.validator)
             guard current.length == response.length, current.mediaType == response.mediaType,
-                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+                  current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data
         }
         return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
                               quality: response.servedOriginal ? .original : quality, availableQualities: choices) { range in
             guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
-            if let cache {
+            if useBlockCache, let cache {
                 return try await cache.read(range, representation: representation, fetch: fetch)
             }
             return try await fetch(range)
@@ -145,6 +159,11 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     }
 
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
+        try await resolve(catalogSong: catalogSong, quality: quality, session: session, useBlockCache: true)
+    }
+
+    private func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession,
+                         useBlockCache: Bool) async throws -> PlaybackStream {
         guard catalogSong.source.lowercased() != "library" else { throw CatalogAPIError.libraryOnly }
         let (client, address, choices, libraryOnly) = try await verifiedServer(for: session)
         guard !libraryOnly else { throw CatalogAPIError.libraryOnly }
@@ -163,13 +182,13 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
             let (data, current) = try await source.fetch(range, validator: response.validator)
             guard current.length == response.length, current.mediaType == response.mediaType,
-                  current.validator == response.validator else { throw PlaybackFailure.invalidStream }
+                  current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data
         }
         return PlaybackStream(contentType: type.uti, fileExtension: type.ext, length: response.length,
                               quality: .original, availableQualities: choices) { range in
             guard range.lowerBound >= 0, range.upperBound < response.length else { throw PlaybackFailure.invalidStream }
-            if let cache { return try await cache.read(range, representation: representation, fetch: fetch) }
+            if useBlockCache, let cache { return try await cache.read(range, representation: representation, fetch: fetch) }
             return try await fetch(range)
         }
     }
