@@ -6,6 +6,11 @@ actor PlaybackPreloadCache {
         let media: PlaybackItem.MediaID
         let quality: PlaybackQuality
 
+        init(session: DeviceSession, item: PlaybackItem, quality: PlaybackQuality) {
+            self.init(scope: LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID),
+                      media: item.mediaID, quality: quality)
+        }
+
         init(scope: LibraryScope, media: PlaybackItem.MediaID, quality: PlaybackQuality) {
             self.scope = scope
             self.media = media

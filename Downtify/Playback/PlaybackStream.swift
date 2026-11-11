@@ -90,6 +90,8 @@ struct PlaybackStream: Sendable {
 }
 
 protocol PlaybackStreamResolving {
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream?
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream
@@ -97,6 +99,8 @@ protocol PlaybackStreamResolving {
 }
 
 extension PlaybackStreamResolving {
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream? { nil }
     func warmTranscode(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws {}
     func resolve(catalogSong: CatalogSong, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {
         throw PlaybackFailure.invalidStream
@@ -108,12 +112,23 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
     private let transport: any HTTPDataLoading
     private let cache: PlaybackCache?
     private let offline: (any OfflinePlaybackProviding)?
+    private let preloadCache: PlaybackPreloadCache?
 
     init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), cache: PlaybackCache? = nil,
-         offline: (any OfflinePlaybackProviding)? = nil) {
+         offline: (any OfflinePlaybackProviding)? = nil, preloadCache: PlaybackPreloadCache? = nil) {
         self.transport = transport
         self.cache = cache
         self.offline = offline
+        self.preloadCache = preloadCache
+    }
+
+    func localStream(for item: PlaybackItem, quality: PlaybackQuality, session: DeviceSession,
+                     allowAlternateQuality: Bool) async -> PlaybackStream? {
+        if let track = item.libraryTrack,
+           let saved = await offline?.offlineStream(trackID: track.id, session: session) { return saved }
+        guard item.catalogSong?.source.lowercased() != "library", let preloadCache else { return nil }
+        let key = PlaybackPreloadCache.Key(session: session, item: item, quality: quality)
+        return await preloadCache.stream(for: key, allowAlternateQuality: allowAlternateQuality)
     }
 
     func resolve(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession) async throws -> PlaybackStream {

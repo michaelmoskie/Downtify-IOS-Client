@@ -38,6 +38,7 @@ struct AppContainer {
         self.catalogPresentation = catalogPresentation
         catalogPresentation.start()
         let playbackCache = PlaybackCache()
+        let preloadCache = PlaybackPreloadCache()
         let verifyPlaybackSession: (DeviceSession) async -> Void = {
             _ = try? await connection.verifySession(expected: $0)
         }
@@ -49,7 +50,8 @@ struct AppContainer {
         self.serverDownloads = serverDownloads
         serverDownloads.start()
         let controller = PlaybackController(
-            engine: AVPlaybackEngine(), resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads),
+            engine: AVPlaybackEngine(),
+            resolver: PlaybackStreamResolver(cache: playbackCache, offline: offlineDownloads, preloadCache: preloadCache),
             audioSession: SystemPlaybackAudioSession(), remote: SystemPlaybackRemoteControls(),
             store: PlaybackStateStore(), networkMonitor: SystemPlaybackNetworkMonitor(),
             cache: playbackCache, reporting: PlaybackReporting(verifySession: verifyPlaybackSession),

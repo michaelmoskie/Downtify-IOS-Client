@@ -242,6 +242,105 @@ final class PlaybackTests: XCTestCase {
     }
 
     @MainActor
+    func testOfflinePlaybackAdvancesFromCachedLibrarySongToCachedCatalogSongWithoutRequests() async throws {
+        let session = deviceSession()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([])
+        let resolver = PlaybackStreamResolver(transport: transport, preloadCache: cache)
+        let fixture = PlaybackFixture(playbackResolver: resolver)
+        let library = PlaybackItem.library(track("cached-library"))
+        let catalog = PlaybackItem.catalog(try JSONDecoder().decode(CatalogSong.self, from: Data(
+            #"{"source":"youtube","song_id":"abcdefghijk","name":"Cached catalog"}"#.utf8
+        )))
+        let alternate: PlaybackQuality = .transcoded(.aac, bitrate: 128)
+        try await cache.store(preloadStream(quality: alternate),
+                              for: .init(session: session, item: library, quality: alternate))
+        try await cache.store(preloadStream(), for: .init(session: session, item: catalog, quality: .original))
+
+        await fixture.controller.updateSession(session) { [] }
+        fixture.network.update?(.unavailable)
+        let starts = expectation(description: "Library copy starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([library, catalog])
+        await fulfillment(of: [starts], timeout: 3)
+        XCTAssertEqual(fixture.controller.streamQuality, alternate)
+
+        let advances = expectation(description: "Catalog copy starts")
+        fixture.engine.onPlay = { advances.fulfill() }
+        fixture.engine.onEvent?(.ended)
+        await fulfillment(of: [advances], timeout: 3)
+        XCTAssertEqual(fixture.controller.queue.current?.item, catalog)
+        XCTAssertEqual(fixture.engine.localLoads, [true, true])
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+
+        fixture.controller.applyLibraryOnlyPolicy(true, tracks: [try XCTUnwrap(library.libraryTrack)])
+        XCTAssertEqual(fixture.controller.queue.entries.map(\.item), [library])
+    }
+
+    @MainActor
+    func testCurrentStreamHandsOffToCompletedCopyAtSamePositionWhenNetworkDrops() async throws {
+        let session = deviceSession()
+        let item = PlaybackItem.library(track("playing"))
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([.info(), .range("0-1/8", bytes: [1, 2])])
+        let fixture = PlaybackFixture(playbackResolver: PlaybackStreamResolver(transport: transport, preloadCache: cache))
+        await fixture.controller.updateSession(session) { [] }
+        let starts = expectation(description: "Network stream starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([item])
+        await fulfillment(of: [starts], timeout: 3)
+        fixture.engine.onEvent?(.position(21, duration: 100))
+
+        try await cache.store(preloadStream(), for: .init(session: session, item: item, quality: .original))
+        let resumes = expectation(description: "Local stream resumes")
+        fixture.engine.onPlay = { resumes.fulfill() }
+        fixture.network.update?(.unavailable)
+        fixture.engine.onEvent?(.failed(.network))
+        await fulfillment(of: [resumes], timeout: 3)
+        XCTAssertEqual(fixture.engine.loads, [0, 21])
+        XCTAssertEqual(fixture.engine.localLoads, [false, true])
+        XCTAssertEqual(fixture.controller.position, 21)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    @MainActor
+    func testMissingPreloadFileFallsBackToNetwork() async throws {
+        let session = deviceSession()
+        let item = PlaybackItem.library(track("evicted"))
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PlaybackPreloadCache(directory: directory)
+        let transport = StreamTestTransport([.info(), .range("0-1/8", bytes: [1, 2])])
+        let fixture = PlaybackFixture(playbackResolver: PlaybackStreamResolver(transport: transport, preloadCache: cache))
+        let key = PlaybackPreloadCache.Key(session: session, item: item, quality: .original)
+        try await cache.store(preloadStream(), for: key)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        try FileManager.default.removeItem(at: XCTUnwrap(files.first))
+
+        await fixture.controller.updateSession(session) { [] }
+        let starts = expectation(description: "Network fallback starts")
+        fixture.engine.onPlay = { starts.fulfill() }
+        fixture.controller.replaceQueue([item])
+        await fulfillment(of: [starts], timeout: 3)
+        XCTAssertEqual(fixture.engine.localLoads, [false])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    private func preloadStream(quality: PlaybackQuality = .original) -> PlaybackStream {
+        PlaybackStream(contentType: "public.mp3", fileExtension: "mp3", length: 8, quality: quality,
+                       availableQualities: [.original, quality]) { range in
+            Data(repeating: 1, count: Int(range.count))
+        }
+    }
+
+    @MainActor
     func testAVPlayerLoadsAndSeeksRangedWAV() async throws {
         let wave = waveFixture()
         let engine = AVPlaybackEngine()
@@ -807,10 +906,10 @@ private struct PlaybackFixture {
     let store: TestPlaybackStore
     let controller: PlaybackController
 
-    init(store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil,
+    init(playbackResolver: (any PlaybackStreamResolving)? = nil, store: TestPlaybackStore? = nil, reporting: PlaybackReporting? = nil,
          podcasts: any PodcastPlaybackServing = PodcastsAPI()) {
         self.store = store ?? TestPlaybackStore()
-        controller = PlaybackController(engine: engine, resolver: resolver, audioSession: audio, remote: remote,
+        controller = PlaybackController(engine: engine, resolver: playbackResolver ?? resolver, audioSession: audio, remote: remote,
                                         store: self.store, networkMonitor: network, reporting: reporting, podcasts: podcasts,
                                         verifySession: { _ in })
     }
@@ -821,11 +920,15 @@ private final class TestPlaybackEngine: PlaybackEngining {
     var onEvent: ((PlaybackEngineEvent) -> Void)?
     var onPlay: (() -> Void)?
     var loads: [TimeInterval] = []
+    var localLoads: [Bool] = []
     var seeks: [TimeInterval] = []
     var mediaResets = 0
     var resets = 0
 
-    func load(_ stream: PlaybackStream, at position: TimeInterval) async throws { loads.append(position) }
+    func load(_ stream: PlaybackStream, at position: TimeInterval) async throws {
+        loads.append(position)
+        localLoads.append(stream.fileURL != nil)
+    }
     func play() {
         onEvent?(.playing)
         onPlay?()
