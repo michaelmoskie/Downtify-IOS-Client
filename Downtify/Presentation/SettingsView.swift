@@ -83,8 +83,14 @@ struct AboutView: View {
             }
             Section {
                 Link("iOS client repository", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
                 Link("Server source code", destination: URL(string: "https://github.com/henriquesebastiao/downtify")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
                 Link("Report a bug", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client/issues")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
             } header: {
                 aboutSectionHeader("Project")
             }
@@ -94,8 +100,14 @@ struct AboutView: View {
                 Text("The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3.")
                     .fixedSize(horizontal: false, vertical: true)
                 Link("iOS client license (GPL-3.0)", destination: URL(string: "https://github.com/michaelmoskie/Downtify-IOS-Client/blob/main/LICENSE")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
                 Link("Server license (AGPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify/blob/main/LICENSE")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
                 Link("Android reference app license (GPL-3.0)", destination: URL(string: "https://github.com/henriquesebastiao/downtify-android/blob/100be83e49c3250424e6326670a73bff69325b73/LICENSE")!)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
             } header: {
                 aboutSectionHeader("Acknowledgments and licenses")
             }
