@@ -496,6 +496,22 @@ final class ServerDownloadQueueTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testAlbumOutcomeRequiresKnownCompleteTrackList() throws {
+        let first = try decodeSong(#"{"source":"youtube","song_id":"song-1","youtube_id":"yt-1","name":"One"}"#)
+        let second = try decodeSong(#"{"source":"youtube","song_id":"song-2","youtube_id":"yt-2","name":"Two"}"#)
+        let expected = [first, second]
+
+        XCTAssertEqual(ServerDownloadPresentationModel.albumOutcome(response: [:], expected: nil), .outcomeUnknown)
+        XCTAssertEqual(ServerDownloadPresentationModel.albumOutcome(response: [:], expected: []), .outcomeUnknown)
+        XCTAssertEqual(ServerDownloadPresentationModel.albumOutcome(response: [:], expected: expected),
+                       .partiallyAccepted(successful: 0, expected: 2))
+        XCTAssertEqual(ServerDownloadPresentationModel.albumOutcome(response: ["yt-1": "queued"], expected: expected),
+                       .partiallyAccepted(successful: 1, expected: 2))
+        XCTAssertEqual(ServerDownloadPresentationModel.albumOutcome(response: ["yt-1": "queued", "yt-2": "queued"], expected: expected),
+                       .accepted)
+    }
+
     func testQueueJobsDecodeCurrentAndLegacySongFields() throws {
         let data = Data(#"[{"song":{"song_id":"new-id","name":"Current","artists":["A","B"]},"status":"running","progress":0.5},{"song":{"id":"old-id","title":"Legacy","artist":"C"},"status":"done"}]"#.utf8)
 

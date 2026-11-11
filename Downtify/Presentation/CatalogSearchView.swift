@@ -5,7 +5,7 @@ struct CatalogSearchView: View {
     @ObservedObject var catalog: CatalogPresentationModel
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
-    var onDownloadAlbum: (String) -> Void = { _ in }
+    var onDownloadAlbum: (String, [CatalogSong]?) -> Void = { _, _ in }
     var albumDownloadState: (String) -> ServerDownloadActionState = { _ in .idle }
     var onDownload: (CatalogSong) -> Void = { _ in }
     var downloadState: (CatalogSong) -> ServerDownloadActionState = { _ in .idle }
@@ -21,7 +21,7 @@ struct CatalogSearchView: View {
 
     init(catalog: CatalogPresentationModel, library: LibraryPresentationModel,
          playback: PlaybackController,
-         onDownloadAlbum: @escaping (String) -> Void = { _ in },
+         onDownloadAlbum: @escaping (String, [CatalogSong]?) -> Void = { _, _ in },
          albumDownloadState: @escaping (String) -> ServerDownloadActionState = { _ in .idle },
          onDownload: @escaping (CatalogSong) -> Void = { _ in },
          downloadState: @escaping (CatalogSong) -> ServerDownloadActionState = { _ in .idle }) {
@@ -409,7 +409,7 @@ struct CatalogSearchView: View {
 
     @ViewBuilder private func serverAlbumDownloadButton(url: String, title: String) -> some View {
         let state = albumDownloadState(url)
-        Button { onDownloadAlbum(url) } label: {
+        Button { onDownloadAlbum(url, resolvedAlbumTracks(for: url)) } label: {
             switch state {
             case .submitting: ProgressView().frame(width: 44, height: 44)
             case .queued, .accepted, .partiallyAccepted: Image(systemName: "checkmark.circle.fill").frame(width: 44, height: 44)
@@ -419,5 +419,18 @@ struct CatalogSearchView: View {
         }
         .disabled(disablesDownloadAction(state))
         .accessibilityLabel(downloadAccessibilityLabel(state, title: title))
+    }
+
+    private func resolvedAlbumTracks(for url: String) -> [CatalogSong]? {
+        switch catalog.finderAlbumState {
+        case .loaded(let details), .partial(let details, _):
+            if details.album.url == url { return details.tracks }
+        default: break
+        }
+        switch catalog.urlResolutionState {
+        case .loaded(let resolution), .partial(let resolution, _):
+            return resolution.albums.count == 1 && resolution.albums.first?.url == url ? resolution.tracks : nil
+        default: return nil
+        }
     }
 }

@@ -110,21 +110,16 @@ final class ServerDownloadPresentationModel: ObservableObject {
         do {
             let response = try await queue.requestAlbum(url: url, session: active)
             guard isCurrent(active) else { return }
-            actionStates[key] = .accepted
+            actionStates[key] = Self.albumOutcome(response: response, expected: expected)
             if let expected {
                 let jobsByProviderID = response
-                var successful = 0
                 for song in expected {
                     let providerIDs = [song.youtubeID, song.songID, song.url].compactMap { $0 }
                     if providerIDs.contains(where: { jobsByProviderID[$0] != nil }) {
                         actionStates[song.id.description] = .accepted
-                        successful += 1
                     } else {
                         actionStates[song.id.description] = .failed("This album track was not queued.")
                     }
-                }
-                if successful < expected.count {
-                    actionStates[key] = .partiallyAccepted(successful: successful, expected: expected.count)
                 }
             }
             await refreshQueue()
@@ -139,6 +134,14 @@ final class ServerDownloadPresentationModel: ObservableObject {
 
     func actionState(forAlbumURL url: String) -> ServerDownloadActionState {
         actionStates["album:\(url)"] ?? .idle
+    }
+
+    static func albumOutcome(response: [String: String], expected: [CatalogSong]?) -> ServerDownloadActionState {
+        guard let expected, !expected.isEmpty else { return .outcomeUnknown }
+        let successful = expected.filter { song in
+            [song.youtubeID, song.songID, song.url].compactMap { $0 }.contains { response[$0] != nil }
+        }.count
+        return successful == expected.count ? .accepted : .partiallyAccepted(successful: successful, expected: expected.count)
     }
 
     /// Called for `queue_reload` and job progress events. Progress frames only refresh the

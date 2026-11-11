@@ -280,7 +280,7 @@ struct LibraryHomeView: View {
     @ViewBuilder
     private var searchContent: some View {
         CatalogSearchView(catalog: catalogPresentation, library: library, playback: playback,
-                          onDownloadAlbum: { url in Task { await serverDownloads.requestAlbum(url: url) } },
+                          onDownloadAlbum: { url, tracks in Task { await serverDownloads.requestAlbum(url: url, expected: tracks) } },
                           albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
                           onDownload: { song in Task { await serverDownloads.request(song: song) } },
                           downloadState: { serverDownloads.actionState(for: $0) })
@@ -299,7 +299,7 @@ struct LibraryHomeView: View {
             shownArtists: [],
             onPlay: { song in playCatalogSong(song) },
             onDownload: { song in Task { await serverDownloads.request(song: song) } },
-            onDownloadAlbum: { url in Task { await serverDownloads.requestAlbum(url: url) } },
+            onDownloadAlbum: { url, tracks in Task { await serverDownloads.requestAlbum(url: url, expected: tracks) } },
             downloadState: { serverDownloads.actionState(for: $0) },
             albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
             onOpenURL: { openProviderURL($0.absoluteString) }

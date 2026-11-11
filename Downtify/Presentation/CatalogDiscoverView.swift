@@ -12,7 +12,7 @@ struct CatalogDiscoverView: View {
     var shownArtists: [String] = []
     var onPlay: (CatalogSong) -> Void
     var onDownload: (CatalogSong) -> Void
-    var onDownloadAlbum: (String) -> Void = { _ in }
+    var onDownloadAlbum: (String, [CatalogSong]?) -> Void = { _, _ in }
     var downloadState: (CatalogSong) -> ServerDownloadActionState = { _ in .idle }
     var albumDownloadState: (String) -> ServerDownloadActionState = { _ in .idle }
     var onOpenURL: (URL) -> Void = { _ in }
@@ -361,7 +361,7 @@ struct CatalogDiscoverView: View {
 
     @ViewBuilder private func serverAlbumDownloadButton(url: String, title: String) -> some View {
         let state = albumDownloadState(url)
-        Button { onDownloadAlbum(url) } label: {
+        Button { onDownloadAlbum(url, resolvedAlbumTracks(for: url)) } label: {
             switch state {
             case .submitting: ProgressView().frame(width: 44, height: 44)
             case .queued, .accepted, .partiallyAccepted: Image(systemName: "checkmark.circle.fill").frame(width: 44, height: 44)
@@ -371,6 +371,14 @@ struct CatalogDiscoverView: View {
         }
         .disabled(disablesDownloadAction(state))
         .accessibilityLabel(downloadAccessibilityLabel(state, title: title))
+    }
+
+    private func resolvedAlbumTracks(for url: String) -> [CatalogSong]? {
+        switch catalog.finderAlbumState {
+        case .loaded(let details), .partial(let details, _):
+            return details.album.url == url ? details.tracks : nil
+        default: return nil
+        }
     }
 
     private func downloadAccessibilityLabel(_ state: ServerDownloadActionState, title: String) -> String {
