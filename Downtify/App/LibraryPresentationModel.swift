@@ -155,7 +155,32 @@ final class LibraryPresentationModel: ObservableObject {
 final class LibraryCollectionsModel: ObservableObject {
     enum State: Equatable { case loading, ready, unavailable }
 
+    enum PlaylistMutationOperation: Equatable {
+        case creating, renaming, addingTracks, removingTracks, removingTrack, reordering
+    }
+
+    enum PlaylistMutationError: Equatable {
+        case conflictRequiresReview
+        case invalidRequest
+        case permissionDenied
+        case notFound
+        case libraryIndexUnavailable
+        case httpStatus(Int)
+        case unexpected
+
+        static func fromHTTPStatus(_ status: Int) -> Self {
+            switch status {
+            case 400: .invalidRequest
+            case 403: .permissionDenied
+            case 404: .notFound
+            case 503: .libraryIndexUnavailable
+            default: .httpStatus(status)
+            }
+        }
+    }
+
     @Published private(set) var playlists: [LibraryPlaylist]?
+    @Published private(set) var supportsPlaylistEditing = false
     @Published private(set) var likedIDs: [String]?
     @Published private(set) var likedSet: Set<String> = []
     @Published private(set) var recents: [LibraryContext] = []
@@ -163,6 +188,8 @@ final class LibraryCollectionsModel: ObservableObject {
     @Published private(set) var likesState: State = .loading
     @Published private(set) var mutationBusy = false
     @Published private(set) var actionError: LocalizedStringKey?
+    @Published private(set) var activePlaylistMutation: PlaylistMutationOperation?
+    @Published private(set) var playlistMutationError: PlaylistMutationError?
     private let api: any LibraryCollectionsFetching
     private let database: LibraryDatabase
     private let sessionUpdates: @Sendable () async throws -> AsyncStream<DeviceSession?>
@@ -172,6 +199,7 @@ final class LibraryCollectionsModel: ObservableObject {
     private var recentWrite: Task<Void, Never>?
     private var session: DeviceSession?
     private var generation = 0
+    private var playlistNameAliases: [String: String] = [:]
 
     init(api: any LibraryCollectionsFetching = LibraryCollectionsAPI(), database: LibraryDatabase,
          sessionUpdates: @escaping @Sendable () async throws -> AsyncStream<DeviceSession?>) {
@@ -203,12 +231,16 @@ final class LibraryCollectionsModel: ObservableObject {
 
     func clearError() { actionError = nil }
 
+    func clearPlaylistMutationError() { playlistMutationError = nil }
+
     func playlist(named name: String) -> LibraryPlaylist? {
-        playlists?.first { $0.name == name && $0.liked != true }
+        let resolvedName = resolvedPlaylistName(name)
+        return playlists?.first { $0.name == resolvedName && $0.liked != true }
     }
 
     func record(_ context: LibraryContext) {
         guard let session else { return }
+        let context = canonicalContext(context)
         recents = Array(([context] + recents.filter { $0 != context }).prefix(12))
         let recentContexts = recents
         let prior = recentWrite
@@ -276,6 +308,122 @@ final class LibraryCollectionsModel: ObservableObject {
         }
     }
 
+    func createPlaylist(name: String) async {
+        await mutatePlaylist(.creating) { session in
+            try await api.createPlaylist(name: name, session: session)
+        }
+    }
+
+    func renamePlaylist(name: String, to newName: String) async {
+        guard let session, !mutationBusy else { return }
+        let request = generation
+        let currentName = playlist(named: name)?.name ?? name
+        await mutatePlaylist(.renaming) { session in
+            try await api.renamePlaylist(name: currentName, to: newName, session: session)
+        }
+        guard request == generation, self.session == session, playlistMutationError == nil else { return }
+
+        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == currentName }
+        for alias in aliases {
+            playlistNameAliases[alias] = newName
+        }
+        playlistNameAliases[currentName] = newName
+        if name != currentName { playlistNameAliases[name] = newName }
+        recents = recents.map { context in
+            guard case .playlist(let recentName) = context,
+                  recentName == currentName || recentName == name else { return context }
+            return .playlist(newName)
+        }
+        let recentContexts = recents
+        let prior = recentWrite
+        let write = Task {
+            await prior?.value
+            await save(recentContexts, key: "recents", session: session)
+        }
+        recentWrite = write
+        await write.value
+    }
+
+    func addTracks(_ trackIDs: [String], to name: String, allowDuplicates: Bool = false) async {
+        guard !trackIDs.isEmpty else { return }
+        await mutatePlaylist(.addingTracks) { session in
+            try await api.editPlaylistTracks(
+                name: name, add: trackIDs, remove: nil, removeEntries: nil,
+                allowDuplicates: allowDuplicates, session: session
+            )
+        }
+    }
+
+    /// Removes every occurrence of each supplied track ID.
+    func removeTracks(_ trackIDs: [String], from name: String) async {
+        guard !trackIDs.isEmpty else { return }
+        await mutatePlaylist(.removingTracks) { session in
+            try await api.editPlaylistTracks(
+                name: name, add: nil, remove: trackIDs, removeEntries: nil,
+                allowDuplicates: nil, session: session
+            )
+        }
+    }
+
+    /// `occurrence` is the zero-based rank among copies of `trackID`, not the playlist row position.
+    func removePlaylistOccurrence(trackID: String, occurrence: Int, from name: String) async {
+        guard occurrence >= 0 else {
+            playlistMutationError = .invalidRequest
+            return
+        }
+        let entry = PlaylistTrackEditsRequestDTO.RemovalEntry(trackID: trackID, occurrence: occurrence)
+        await mutatePlaylist(.removingTrack) { session in
+            try await api.editPlaylistTracks(
+                name: name, add: nil, remove: nil, removeEntries: [entry],
+                allowDuplicates: nil, session: session
+            )
+        }
+    }
+
+    func reorderPlaylist(_ name: String, trackIDs: [String]) async {
+        guard let playlist = playlist(named: name),
+              PlaylistTrackOccurrence.completeOrder(
+                PlaylistTrackOccurrence.ordered(trackIDs), matching: playlist.trackIDs
+              ) != nil else {
+            playlistMutationError = .invalidRequest
+            return
+        }
+        await mutatePlaylist(.reordering) { session in
+            try await api.reorderPlaylist(name: name, trackIDs: trackIDs, session: session)
+        }
+    }
+
+    private func mutatePlaylist(
+        _ operation: PlaylistMutationOperation,
+        write: (DeviceSession) async throws -> Void
+    ) async {
+        guard let session, !mutationBusy else { return }
+        let request = generation
+        mutationBusy = true
+        activePlaylistMutation = operation
+        playlistMutationError = nil
+        actionError = nil
+        await refreshTask?.value
+        guard request == generation else { return }
+        do {
+            try await write(session)
+        } catch {
+            guard request == generation else { return }
+            if case APIError.httpStatus(let status, _) = error {
+                // A stale order must be reviewed against the refreshed authoritative list.
+                // Never resubmit the original sequence automatically.
+                playlistMutationError = status == 409 && operation == .reordering
+                    ? .conflictRequiresReview : PlaylistMutationError.fromHTTPStatus(status)
+            } else {
+                playlistMutationError = .unexpected
+            }
+        }
+        guard request == generation else { return }
+        mutationBusy = false
+        activePlaylistMutation = nil
+        await refresh(for: session)
+    }
+
     private func mutate(failure: LocalizedStringKey, write: (DeviceSession) async throws -> Void, apply: () -> Void) async {
         guard let session, !mutationBusy else { return }
         let request = generation
@@ -306,6 +454,7 @@ final class LibraryCollectionsModel: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
         refreshNeeded = false
+        playlistNameAliases.removeAll()
         playlists = nil
         applyLikes(nil)
         recents = []
@@ -313,7 +462,12 @@ final class LibraryCollectionsModel: ObservableObject {
         likesState = .loading
         mutationBusy = false
         actionError = nil
+        supportsPlaylistEditing = false
+        activePlaylistMutation = nil
+        playlistMutationError = nil
         guard let newSession else { return }
+
+        Task { await refreshPlaylistEditingCapability(for: newSession, generation: request) }
 
         // Delay remote refreshes until the initial cache has been read.
         mutationBusy = true
@@ -327,6 +481,26 @@ final class LibraryCollectionsModel: ObservableObject {
         recents = cachedRecents ?? []
         mutationBusy = false
         Task { await refresh(for: newSession) }
+    }
+
+    private func refreshPlaylistEditingCapability(for session: DeviceSession, generation request: Int) async {
+        let supported = (try? await api.supportsPlaylistEditing(for: session)) == true
+        guard request == generation, self.session == session else { return }
+        supportsPlaylistEditing = supported
+    }
+
+    private func resolvedPlaylistName(_ name: String) -> String {
+        var resolved = name
+        var visited = Set<String>()
+        while let next = playlistNameAliases[resolved], visited.insert(resolved).inserted {
+            resolved = next
+        }
+        return resolved
+    }
+
+    private func canonicalContext(_ context: LibraryContext) -> LibraryContext {
+        guard case .playlist(let name) = context else { return context }
+        return .playlist(resolvedPlaylistName(name))
     }
 
     private func applyLikes(_ ids: [String]?) {

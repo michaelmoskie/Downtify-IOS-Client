@@ -206,7 +206,7 @@ private struct PodcastEpisodeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: .center, spacing: DowntifyStyle.Space.regular) {
                 PodcastArtwork(show: show, size: 120)
                     .accessibilityHidden(true)
                 Text(episode.title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
@@ -251,7 +251,8 @@ private struct PodcastEpisodeView: View {
                     Text(podcastDescription(description)).textSelection(.enabled)
                 }
             }
-            .frame(maxWidth: 620, alignment: .leading)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 620)
             .padding(DowntifyStyle.Space.regular)
             .frame(maxWidth: .infinity)
         }

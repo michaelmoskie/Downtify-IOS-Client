@@ -278,6 +278,7 @@ final class LibrarySyncTests: XCTestCase {
         let secondGate = AsyncGate()
         let receivedRefresh = expectation(description: "Socket change fetched the next cursor")
         let receivedSecondRefresh = expectation(description: "Second change fetched the committed cursor")
+        let policyRefresh = expectation(description: "Music policy changes trigger a verified info refresh")
         let feed = ScriptedLibraryFeed([
             .page(10, full: true, tracks: [track("before")]),
             .held(.page(LibraryPage(cursor: 11, full: false, tracks: [track("after")], deleted: []), etag: nil),
@@ -289,7 +290,8 @@ final class LibrarySyncTests: XCTestCase {
         let socket = TestLibrarySocket(ready: socketReady, stopped: socketStopped)
         let coordinator = LibrarySyncCoordinator(
             repository: repository, events: socket, sessionUpdates: { state.updates },
-            verifySession: { _ in .active }
+            verifySession: { _ in .active },
+            didChangeMusicPolicy: { _ in policyRefresh.fulfill() }
         )
 
         let worker = Task { await coordinator.runWhileActive() }
@@ -298,7 +300,10 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"library_changed"}"#)), .libraryChanged)
         XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"playlists_changed"}"#)), .collectionsChanged)
         XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"likes","count":3}"#)), .collectionsChanged)
+        XCTAssertEqual(LibraryLiveEvent.decode(.string(#"{"type":"music_policy_changed"}"#)), .musicPolicyChanged)
         XCTAssertNil(LibraryLiveEvent.decode(.string(#"{"type":"other"}"#)))
+        socket.continuation.yield(.musicPolicyChanged)
+        await fulfillment(of: [policyRefresh], timeout: 3)
         socket.continuation.yield(.libraryChanged)
         await fulfillment(of: [receivedRefresh], timeout: 3)
         socket.continuation.yield(.libraryChanged)

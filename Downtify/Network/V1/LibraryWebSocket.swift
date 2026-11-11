@@ -4,6 +4,8 @@ enum LibraryLiveEvent: Equatable {
     case connected
     case libraryChanged
     case collectionsChanged
+    case musicPolicyChanged
+    case downloadQueueChanged
 
     static func decode(_ message: URLSessionWebSocketTask.Message) -> Self? {
         let data: Data
@@ -13,14 +15,36 @@ enum LibraryLiveEvent: Equatable {
         @unknown default: return nil
         }
         guard let event = try? JSONDecoder().decode(WireEvent.self, from: data) else { return nil }
+        if event.isDownloadProgress { return .downloadQueueChanged }
         switch event.type {
         case "library_changed": return .libraryChanged
         case "playlists_changed", "likes": return .collectionsChanged
+        case "music_policy_changed": return .musicPolicyChanged
+        // Queue reloads and progress frames describe server-side jobs. They must not
+        // trigger a library feed sync; the queue has its own refresh path.
+        case "queue_reload", "download_progress", "queue_progress": return .downloadQueueChanged
         default: return nil
         }
     }
 
-    private struct WireEvent: Decodable { let type: String }
+    private struct WireEvent: Decodable {
+        let type: String?
+        let song: [String: CatalogJSONValue]?
+        let progress: Double?
+        let status: String?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            type = try container.decodeIfPresent(String.self, forKey: .type)
+            song = try container.decodeIfPresent([String: CatalogJSONValue].self, forKey: .song)
+            progress = try container.decodeIfPresent(Double.self, forKey: .progress)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+        }
+
+        private enum CodingKeys: String, CodingKey { case type, song, progress, status }
+
+        var isDownloadProgress: Bool { song != nil && (progress != nil || status != nil) }
+    }
 }
 
 enum LibrarySocketError: Error, Equatable {

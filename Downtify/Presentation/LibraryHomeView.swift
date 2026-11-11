@@ -7,8 +7,11 @@ struct LibraryHomeView: View {
     @Binding var appearance: DowntifyAppearance
     let connection: ConnectionService
     let serverDownloadQueue: ServerDownloadQueue
+    let serverDownloads: ServerDownloadPresentationModel
     let signOut: @MainActor () async throws -> Void
     @EnvironmentObject private var collections: LibraryCollectionsModel
+    @EnvironmentObject private var catalogPresentation: CatalogPresentationModel
+    @Environment(\.openURL) private var openURL
     @Environment(\.downtifyPalette) private var palette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("library.sort") private var sort = LibrarySort.recentlyAdded
@@ -22,6 +25,8 @@ struct LibraryHomeView: View {
     @State private var tab = Tab.home
     @State private var trashTrack: LibraryTrack?
     @State private var showingSettings = false
+    @State private var showingCreatePlaylist = false
+    @State private var newPlaylistName = ""
 
     private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash }
     private enum Category: String, CaseIterable, Identifiable {
@@ -46,7 +51,6 @@ struct LibraryHomeView: View {
 
             NavigationStack {
                 browsePage(title: "Search") { searchContent }
-                    .searchable(text: $searchText, prompt: "Search your library")
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(Tab.search)
@@ -57,7 +61,8 @@ struct LibraryHomeView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
             .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
 
-            DownloadsView(connection: connection, queue: serverDownloadQueue, playback: playback, library: library)
+            DownloadsView(connection: connection, queue: serverDownloadQueue, serverDownloads: serverDownloads,
+                          playback: playback)
                 .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
                 .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }.tag(Tab.downloads)
 
@@ -99,11 +104,41 @@ struct LibraryHomeView: View {
                 SettingsView(appearance: $appearance, language: $language)
             }
         }
+        .sheet(isPresented: $showingCreatePlaylist, onDismiss: { newPlaylistName = "" }) {
+            NavigationStack {
+                Form {
+                    TextField("Playlist name", text: $newPlaylistName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .accessibilityLabel("Playlist name")
+                    PlaylistMutationFeedbackRow()
+                }
+                .navigationTitle("New Playlist")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingCreatePlaylist = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Create") {
+                            let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await collections.createPlaylist(name: name)
+                                if collections.playlistMutationError == nil {
+                                    showingCreatePlaylist = false
+                                }
+                            }
+                        }
+                        .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  collections.mutationBusy)
+                    }
+                }
+            }
+        }
     }
 
     private func browsePage<Content: View>(title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: tab == .library && category == .songs ? .leading : .center, spacing: DowntifyStyle.Space.regular) {
                 syncStatus
                 content()
             }
@@ -120,6 +155,7 @@ struct LibraryHomeView: View {
         }
         .navigationDestination(for: LibraryContext.self) { context in
             LibraryContextView(context: context, library: library, playback: playback,
+                               serverDownloads: serverDownloads,
                                onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
         }
     }
@@ -142,6 +178,11 @@ struct LibraryHomeView: View {
     }
 
     private var query: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func openProviderURL(_ value: String?) {
+        guard let value, let url = URL(string: value), url.scheme?.lowercased() == "https" else { return }
+        openURL(url)
+    }
     private var likedEntry: LibraryBrowseEntry {
         LibraryBrowseEntry(id: "", context: .liked, title: String(localized: "Liked songs"), artist: "",
                            added: 0, count: collections.likedIDs?.count ?? 0,
@@ -192,7 +233,7 @@ struct LibraryHomeView: View {
     }
 
     private func shelf(_ title: LocalizedStringKey, entries: [LibraryBrowseEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .center, spacing: 8) {
             Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             LibraryEntryList(entries: entries, grid: !dynamicTypeSize.isAccessibilitySize)
         }
@@ -238,50 +279,47 @@ struct LibraryHomeView: View {
 
     @ViewBuilder
     private var searchContent: some View {
-        if query.isEmpty {
-            DowntifyUnavailableView(title: "Search your library", symbol: "magnifyingglass",
-                                    message: Text("Search saved songs, albums, and artists. Server catalog search is not available in the verified device contract."))
-        } else if library.tracks.isEmpty {
-            emptyTracks
-        } else {
-            let matchingTracks = LibraryTrackOrdering.matching(library.tracks, query: query)
-            let albums = matching(Array(library.catalog.albumsByID.values))
-            let artists = matching(Array(library.catalog.artistsByID.values))
-            if matchingTracks.isEmpty && albums.isEmpty && artists.isEmpty {
-                ContentUnavailableView.search(text: searchText)
-            } else {
-                if !matchingTracks.isEmpty {
-                    Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryTrackList(tracks: matchingTracks, context: nil, playback: playback,
-                                     onMoveToTrash: server.role?.lowercased() == "admin" ? { trashTrack = $0 } : nil)
-                }
-                if !albums.isEmpty {
-                    Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryEntryList(entries: sort.ordered(albums, descending: descending), grid: false)
-                }
-                if !artists.isEmpty {
-                    Text("Artists").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    LibraryEntryList(entries: sort.ordered(artists, descending: descending), grid: false)
-                }
-            }
-        }
+        CatalogSearchView(catalog: catalogPresentation, library: library, playback: playback,
+                          onDownloadAlbum: { url, tracks in Task { await serverDownloads.requestAlbum(url: url, expected: tracks) } },
+                          albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
+                          onDownload: { song in Task { await serverDownloads.request(song: song) } },
+                          downloadState: { serverDownloads.actionState(for: $0) })
     }
 
     private var discoveryContent: some View {
-        VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
-            Label("Catalog discovery is unavailable", systemImage: "sparkles")
-                .font(.title3.bold())
-            Text("The audited server contract does not define a Discover catalog endpoint. Your saved library remains available in Library and Search.")
-                .foregroundStyle(.secondary)
-            Divider()
-            Label("Similar tracks are unavailable", systemImage: "waveform.path")
-                .font(.headline)
-            Text("Android uses GET /api/similar/tracks, which is outside the mobile device contract. Downtify does not request it without a verified server contract.")
-                .foregroundStyle(.secondary)
+        CatalogDiscoverView(
+            catalog: catalogPresentation,
+            libraryTracks: library.tracks,
+            libraryArtists: discoveryLibraryArtists,
+            libraryAlbums: Array(library.catalog.albumsByID.values).map {
+                CatalogLibraryAlbum(artist: $0.artist, title: $0.title)
+            },
+            playlistNames: (collections.playlists ?? []).filter { $0.liked != true }.map(\.name),
+            playlistIDs: (collections.playlists ?? []).filter { $0.liked != true }.map(\.id),
+            shownArtists: [],
+            onPlay: { song in playCatalogSong(song) },
+            onDownload: { song in Task { await serverDownloads.request(song: song) } },
+            onDownloadAlbum: { url, tracks in Task { await serverDownloads.requestAlbum(url: url, expected: tracks) } },
+            downloadState: { serverDownloads.actionState(for: $0) },
+            albumDownloadState: { serverDownloads.actionState(forAlbumURL: $0) },
+            onOpenURL: { openProviderURL($0.absoluteString) }
+        )
+    }
+
+    private var discoveryLibraryArtists: [CatalogLibraryArtist] {
+        Dictionary(grouping: library.tracks, by: LibraryCatalog.artistName(_:)).map { name, tracks in
+            CatalogLibraryArtist(name: name, tracks: tracks.count,
+                                 liked: tracks.filter { collections.likedSet.contains($0.id) }.count)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func playCatalogSong(_ song: CatalogSong) {
+        if song.source == "library" {
+            guard let track = song.libraryTrack(in: library.tracks) else { return }
+            playback.replaceQueue([.library(track)])
+        } else {
+            playback.replaceQueue([.catalog(song)])
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(palette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var sortMenu: some View {
@@ -323,6 +361,13 @@ struct LibraryHomeView: View {
     @ViewBuilder
     private var playlistContent: some View {
         collectionStatus(collections.playlistState, cached: collections.playlists != nil, title: "Playlists could not be refreshed.")
+        if collections.supportsPlaylistEditing {
+            Button("Create Playlist", systemImage: "plus") {
+                showingCreatePlaylist = true
+            }
+            .disabled(collections.mutationBusy)
+            .accessibilityHint("Create a new manual playlist")
+        }
         if collections.likesState == .unavailable && collections.likedIDs == nil {
             collectionStatus(.unavailable, cached: false, title: "Liked songs are unavailable.")
         }
@@ -408,13 +453,14 @@ private struct LibraryEntryList: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 12)], spacing: 12) {
                 ForEach(entries) { entry in
                     NavigationLink(value: entry.context) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .center, spacing: 6) {
                             artwork(entry, size: 108)
                             Text(entry.title).font(.headline).lineLimit(2)
                             Text(subtitle(entry)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                             Spacer(minLength: 0)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .top)
                         .padding(10)
                         .contentShape(Rectangle())
                     }
@@ -425,9 +471,15 @@ private struct LibraryEntryList: View {
             LazyVStack(spacing: 0) {
                 ForEach(entries) { entry in
                     NavigationLink(value: entry.context) {
-                        DowntifyMediaRow(title: entry.title, subtitle: subtitle(entry)) {
+                        VStack(spacing: 6) {
                             artwork(entry, size: 54)
-                        } accessory: {
+                            Text(entry.title).font(.headline)
+                            Text(subtitle(entry)).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .trailing) {
                             Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary).accessibilityHidden(true)
                         }
@@ -470,12 +522,17 @@ private struct LibraryContextView: View {
     let context: LibraryContext
     @ObservedObject var library: LibraryPresentationModel
     let playback: PlaybackController
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
     var onMoveToTrash: ((LibraryTrack) -> Void)? = nil
     @EnvironmentObject private var collections: LibraryCollectionsModel
+    @EnvironmentObject private var catalog: CatalogPresentationModel
     @EnvironmentObject private var downloads: OfflineDownloads
     @Environment(\.downtifyPalette) private var palette
     @State private var confirmingDownload = false
     @State private var downloadMessage: LocalizedStringKey?
+    @State private var playlistSheet: PlaylistEditingSheet?
+    @State private var playlistNameDraft = ""
+    @State private var selectedTrackIDs: Set<String> = []
 
     private var playlist: LibraryPlaylist? {
         guard case .playlist(let name) = context else { return nil }
@@ -494,7 +551,7 @@ private struct LibraryContextView: View {
     var body: some View {
         let tracks = library.catalog.tracks(in: context, likedIDs: collections.likedIDs ?? [], playlist: playlist)
         ScrollView {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: .center, spacing: DowntifyStyle.Space.regular) {
                 if let playlist, playlist.mine == false, let owner = playlist.owner, !owner.isEmpty {
                     Text("By \(owner)").foregroundStyle(.secondary)
                 }
@@ -512,9 +569,19 @@ private struct LibraryContextView: View {
                 }
                 actions(tracks)
                 if let downloadMessage { Text(downloadMessage).font(.subheadline).foregroundStyle(.secondary) }
+                PlaylistMutationFeedbackRow()
                 status(tracks)
                 if case .artist(let id) = context {
                     let albums = library.catalog.albums(for: id)
+                    if catalog.externalCatalogAvailable, let artist = library.catalog.artistsByID[id] {
+                        NavigationLink {
+                            ArtistCatalogAlbumsView(artist: artist.title, library: library,
+                                                    serverDownloads: serverDownloads, catalog: catalog)
+                        } label: {
+                            Label("Find more albums", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.bordered)
+                    }
                     if !albums.isEmpty {
                         Text("Albums").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                         LibraryEntryList(entries: albums, grid: false)
@@ -522,6 +589,7 @@ private struct LibraryContextView: View {
                 }
                 if !tracks.isEmpty {
                     Text("Songs").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     LibraryTrackList(tracks: tracks, context: context, playback: playback,
                                      onMoveToTrash: onMoveToTrash)
                 } else if let error = collections.actionError {
@@ -540,6 +608,111 @@ private struct LibraryContextView: View {
         }
         .navigationTitle(title)
         .background(palette.background.ignoresSafeArea())
+        .toolbar {
+            if canEditTracks || canRenamePlaylist {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        if canRenamePlaylist {
+                            Button("Rename Playlist", systemImage: "pencil") {
+                                playlistNameDraft = playlist?.name ?? ""
+                                playlistSheet = .rename
+                            }
+                        }
+                        if canEditTracks {
+                            Button("Add Tracks", systemImage: "plus") {
+                                selectedTrackIDs = []
+                                playlistSheet = .addTracks
+                            }
+                            Button("Remove Track Occurrence", systemImage: "minus.circle") {
+                                playlistSheet = .removeOccurrence
+                            }
+                            Button("Reorder Tracks", systemImage: "arrow.up.arrow.down") {
+                                playlistSheet = .reorder
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "pencil.and.list")
+                    }
+                    .accessibilityLabel("Edit playlist")
+                }
+            }
+        }
+        .sheet(item: $playlistSheet) { sheet in
+            if let playlist {
+                switch sheet {
+                case .rename:
+                    NavigationStack {
+                        Form {
+                            TextField("Playlist name", text: $playlistNameDraft)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .accessibilityLabel("Playlist name")
+                            PlaylistMutationFeedbackRow()
+                        }
+                        .navigationTitle("Rename Playlist")
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cancel") { playlistSheet = nil }
+                            }
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Save") {
+                                    let name = playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    Task {
+                                        await collections.renamePlaylist(name: playlist.name, to: name)
+                                        if collections.playlistMutationError == nil {
+                                            playlistSheet = nil
+                                        }
+                                    }
+                                }
+                                .disabled(playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                          playlistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) == playlist.name ||
+                                          collections.mutationBusy)
+                            }
+                        }
+                    }
+                case .addTracks:
+                    PlaylistTrackSelectionSheet(
+                        tracks: LibraryTrackOrdering.sorted(library.tracks),
+                        selectedTrackIDs: $selectedTrackIDs,
+                        isBusy: collections.mutationBusy
+                    ) {
+                        let ids = LibraryTrackOrdering.sorted(library.tracks)
+                            .filter { selectedTrackIDs.contains($0.id) }
+                            .map(\.id)
+                        Task {
+                            await collections.addTracks(ids, to: playlist.name)
+                            if collections.playlistMutationError == nil {
+                                playlistSheet = nil
+                            }
+                        }
+                    }
+                case .removeOccurrence:
+                    PlaylistOccurrenceRemovalSheet(
+                        playlist: playlist,
+                        catalog: library.catalog,
+                        isBusy: collections.mutationBusy
+                    ) { occurrence in
+                        let rank = playlist.trackIDs.prefix(occurrence.position)
+                            .filter { $0 == occurrence.trackID }.count
+                        Task {
+                            await collections.removePlaylistOccurrence(
+                                trackID: occurrence.trackID, occurrence: rank, from: playlist.name
+                            )
+                        }
+                    }
+                case .reorder:
+                    PlaylistReorderSheet(playlist: playlist, catalog: library.catalog,
+                                         isBusy: collections.mutationBusy) { orderedIDs in
+                        Task {
+                            await collections.reorderPlaylist(playlist.name, trackIDs: orderedIDs)
+                            if collections.playlistMutationError == nil {
+                                playlistSheet = nil
+                            }
+                        }
+                    }
+                }
+            }
+        }
         .confirmationDialog("Download these songs for offline playback?", isPresented: $confirmingDownload, titleVisibility: .visible) {
             Button("Download songs") {
                 var failures = 0
@@ -570,7 +743,6 @@ private struct LibraryContextView: View {
                 }
                 .accessibilityLabel("Shuffle songs")
             }
-            Spacer()
             if let playlist, let favorite = playlist.favorite {
                 Button {
                     Task { await collections.toggleFavorite(playlist.name) }
@@ -590,6 +762,22 @@ private struct LibraryContextView: View {
                 .accessibilityLabel("Collection actions")
             }
         }
+    }
+
+    private var canEditTracks: Bool {
+        guard collections.supportsPlaylistEditing,
+              let playlist,
+              playlist.manual == true,
+              playlist.canEditTracks == true else { return false }
+        return true
+    }
+
+    private var canRenamePlaylist: Bool {
+        guard collections.supportsPlaylistEditing,
+              let playlist,
+              playlist.manual == true,
+              playlist.mine == true else { return false }
+        return true
     }
 
     @ViewBuilder
@@ -618,6 +806,351 @@ private struct LibraryContextView: View {
             if tracks.isEmpty && (collectionState == nil || collectionState == .ready || hasCache) {
                 ContentUnavailableView("No songs available", systemImage: "music.note")
             }
+        }
+    }
+}
+
+
+/// Catalog browsing is scoped to this page so it does not replace the Search tab's results.
+private struct ArtistCatalogAlbumsView: View {
+    let artist: String
+    @ObservedObject var library: LibraryPresentationModel
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
+    @ObservedObject var catalog: CatalogPresentationModel
+    @State private var albums: [CatalogAlbum] = []
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if isLoading { ProgressView("Loading albums…") }
+            if let error { Text(error).foregroundStyle(.secondary) }
+            if !isLoading && error == nil && albums.isEmpty {
+                Text("No albums found.").foregroundStyle(.secondary)
+            }
+            ForEach(albums) { album in
+                NavigationLink {
+                    ArtistCatalogAlbumView(album: album, library: library, serverDownloads: serverDownloads, catalog: catalog)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(album.title)
+                        Text(album.artist).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle(artist)
+        .task(id: catalog.session) {
+            albums = []
+            error = nil
+            guard let session = catalog.session, catalog.externalCatalogAvailable else {
+                isLoading = false
+                error = String(localized: "Catalog is unavailable.")
+                return
+            }
+            isLoading = true
+            do {
+                let results = try await CatalogAPI().searchAlbums(query: artist, limit: 50, session: session)
+                guard !Task.isCancelled else { return }
+                albums = results.filter { $0.artist.localizedCaseInsensitiveCompare(artist) == .orderedSame }
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
+            isLoading = false
+        }
+    }
+}
+
+private enum PlaylistEditingSheet: String, Identifiable {
+    case rename, addTracks, removeOccurrence, reorder
+    var id: String { rawValue }
+}
+
+private struct PlaylistTrackSelectionSheet: View {
+    let tracks: [LibraryTrack]
+    @Binding var selectedTrackIDs: Set<String>
+    let isBusy: Bool
+    let onAdd: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(tracks) { track in
+                    Button {
+                        if selectedTrackIDs.contains(track.id) {
+                            selectedTrackIDs.remove(track.id)
+                        } else {
+                            selectedTrackIDs.insert(track.id)
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(track.title)
+                                Text(track.artist).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedTrackIDs.contains(track.id) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(track.title), \(track.artist)")
+                    .accessibilityValue(selectedTrackIDs.contains(track.id) ? Text("Selected") : Text("Not selected"))
+                }
+            }
+            .navigationTitle("Add Tracks")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { onAdd() }
+                        .disabled(selectedTrackIDs.isEmpty || isBusy)
+                }
+            }
+        }
+    }
+}
+
+private struct ArtistCatalogAlbumView: View {
+    let album: CatalogAlbum
+    @ObservedObject var library: LibraryPresentationModel
+    @ObservedObject var serverDownloads: ServerDownloadPresentationModel
+    @ObservedObject var catalog: CatalogPresentationModel
+    @State private var songs: [CatalogSong] = []
+    @State private var isLoading = true
+    @State private var error: String?
+
+    private func isInLibrary(_ song: CatalogSong) -> Bool {
+        library.tracks.contains {
+            $0.title.localizedCaseInsensitiveCompare(song.title) == .orderedSame &&
+            $0.album.localizedCaseInsensitiveCompare(album.title) == .orderedSame &&
+            ($0.albumArtist.isEmpty ? $0.artist : $0.albumArtist).localizedCaseInsensitiveCompare(album.artist) == .orderedSame
+        }
+    }
+
+    private func canRequest(_ song: CatalogSong) -> Bool {
+        guard catalog.externalCatalogAvailable, !isInLibrary(song), song.source != "library" else { return false }
+        switch serverDownloads.actionState(for: song) {
+        case .idle, .failed: return true
+        default: return false
+        }
+    }
+
+    private func status(_ song: CatalogSong) -> String {
+        if isInLibrary(song) || song.source == "library" { return String(localized: "In your library") }
+        switch serverDownloads.actionState(for: song) {
+        case .idle: return String(localized: "Add to library")
+        case .submitting: return String(localized: "Requesting…")
+        case .queued, .accepted: return String(localized: "Queued")
+        case .partiallyAccepted: return String(localized: "Partially queued")
+        case .outcomeUnknown: return String(localized: "Check queue")
+        case .failed: return String(localized: "Retry")
+        }
+    }
+
+    var body: some View {
+        List {
+            if isLoading { ProgressView("Loading album…") }
+            if let error { Text(error).foregroundStyle(.secondary) }
+            if !isLoading && error == nil && songs.isEmpty { Text("No songs found.").foregroundStyle(.secondary) }
+            let missing = songs.filter(canRequest)
+            if !missing.isEmpty {
+                Button("Add missing songs to library", systemImage: "plus.circle") {
+                    Task { await serverDownloads.requestBatch(songs: missing) }
+                }
+            }
+            ForEach(songs) { song in
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text(song.title)
+                        Spacer()
+                        Button(status(song)) { Task { await serverDownloads.request(song: song) } }
+                            .disabled(!canRequest(song))
+                    }
+                    if case .failed(let message) = serverDownloads.actionState(for: song) {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if !songs.isEmpty {
+                Text("Songs are added after the server downloads them and the library syncs.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(album.title)
+        .task(id: catalog.session) {
+            songs = []
+            error = nil
+            guard let session = catalog.session, catalog.externalCatalogAvailable else {
+                isLoading = false
+                error = String(localized: "Catalog is unavailable.")
+                return
+            }
+            isLoading = true
+            do {
+                let id = album.deezerAlbumID ?? (album.source.lowercased() == "deezer" ? album.albumID : nil)
+                if let id, !id.isEmpty, id.utf8.allSatisfy({ (48...57).contains($0) }), catalog.supportsDiscover == true {
+                    songs = try await CatalogAPI().finderAlbum(id: id, session: session).tracks
+                } else if let url = album.url {
+                    songs = try await CatalogAPI().resolve(url: url, session: session).tracks
+                } else {
+                    error = String(localized: "Album details are unavailable.")
+                }
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
+            isLoading = false
+        }
+    }
+}
+
+private struct PlaylistOccurrenceRemovalSheet: View {
+    let playlist: LibraryPlaylist
+    let catalog: LibraryCatalog
+    let isBusy: Bool
+    let onRemove: (PlaylistTrackOccurrence) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(catalog.playlistOccurrences(playlist)) { row in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(row.track?.title ?? String(localized: "Unavailable track"))
+                            Text(row.track?.artist ?? row.occurrence.trackID)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                            onRemove(row.occurrence)
+                        }
+                        .disabled(isBusy)
+                        .accessibilityLabel("Remove track occurrence")
+                        .accessibilityValue(Text("Occurrence \(Int(row.occurrence.position + 1))"))
+                    }
+                }
+            }
+            .navigationTitle("Remove Occurrence")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct PlaylistReorderSheet: View {
+    let playlist: LibraryPlaylist
+    let catalog: LibraryCatalog
+    let isBusy: Bool
+    let onSave: ([String]) -> Void
+    @State private var occurrences: [PlaylistTrackOccurrence] = []
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var collections: LibraryCollectionsModel
+
+    var body: some View {
+        NavigationStack {
+            List {
+                PlaylistMutationFeedbackRow()
+                ForEach(occurrences) { occurrence in
+                    VStack(alignment: .leading) {
+                        Text(catalog.tracksByID[occurrence.trackID]?.title ?? String(localized: "Unavailable track"))
+                        Text(catalog.tracksByID[occurrence.trackID]?.artist ?? occurrence.trackID)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .onMove { source, destination in occurrences.move(fromOffsets: source, toOffset: destination) }
+            }
+            .navigationTitle("Reorder Tracks")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let completeIDs = PlaylistTrackOccurrence.completeOrder(
+                            occurrences, matching: playlist.trackIDs
+                        ) else { return }
+                        onSave(completeIDs)
+                    }
+                    .disabled(isBusy || PlaylistTrackOccurrence.completeOrder(
+                        occurrences, matching: playlist.trackIDs
+                    ) == nil || collections.playlistMutationError == .conflictRequiresReview)
+                }
+            }
+            .onChange(of: playlist.trackIDs, initial: true) { _, trackIDs in
+                // A conflict refresh replaces the local draft with the authoritative server order.
+                // The user sees the refreshed rows before another reorder can be submitted.
+                occurrences = PlaylistTrackOccurrence.ordered(trackIDs)
+            }
+        }
+    }
+}
+
+private struct PlaylistMutationFeedbackRow: View {
+    @EnvironmentObject private var collections: LibraryCollectionsModel
+
+    @ViewBuilder
+    var body: some View {
+        if let operation = collections.activePlaylistMutation {
+            ProgressView {
+                Text(progressMessage(for: operation))
+            }
+            .accessibilityElement(children: .combine)
+            .listRowSeparator(.hidden)
+        } else if let error = collections.playlistMutationError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(errorMessage(for: error), systemImage: error == .conflictRequiresReview
+                      ? "arrow.clockwise.circle" : "exclamationmark.circle")
+                    .foregroundStyle(.secondary)
+                if error == .conflictRequiresReview {
+                    Text("The latest playlist order is loaded. Review the updated list before saving again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if error == .conflictRequiresReview {
+                    Button("Review Updated Order") { collections.clearPlaylistMutationError() }
+                        .font(.caption)
+                } else {
+                    Button("Dismiss") { collections.clearPlaylistMutationError() }
+                        .font(.caption)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    private func progressMessage(for operation: LibraryCollectionsModel.PlaylistMutationOperation) -> LocalizedStringKey {
+        switch operation {
+        case .creating: "Creating playlist…"
+        case .renaming: "Renaming playlist…"
+        case .addingTracks: "Adding tracks…"
+        case .removingTracks: "Removing tracks…"
+        case .removingTrack: "Removing tracks…"
+        case .reordering: "Updating playlist order…"
+        }
+    }
+
+    private func errorMessage(for error: LibraryCollectionsModel.PlaylistMutationError) -> LocalizedStringKey {
+        switch error {
+        case .conflictRequiresReview:
+            "This playlist changed on the server."
+        case .invalidRequest:
+            "The server could not accept this change. Check the playlist and selected tracks."
+        case .permissionDenied:
+            "The server denied this change. Your playlist permissions may have changed."
+        case .notFound:
+            "The playlist or one of its tracks is no longer available. Refresh and try again."
+        case .libraryIndexUnavailable:
+            "The server library index is still starting. Try again shortly."
+        case .httpStatus(let status):
+            "The server returned error \(status). Try again."
+        case .unexpected:
+            "Could not update this playlist. Check the connection and try again."
         }
     }
 }

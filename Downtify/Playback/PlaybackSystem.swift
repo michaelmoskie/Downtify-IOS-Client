@@ -85,8 +85,12 @@ enum PlaybackRemoteCommand {
 }
 
 struct PlaybackMetadata {
-    let track: LibraryTrack?
+    let item: PlaybackItem?
+    var track: LibraryTrack? { item?.libraryTrack }
     var podcast: PodcastSelection? = nil
+    var title: String { podcast?.episode.title ?? item?.title ?? "" }
+    var artist: String { podcast?.show.author ?? item?.artist ?? "" }
+    var album: String { podcast?.show.name ?? item?.album ?? "" }
     let position: TimeInterval
     let duration: TimeInterval?
     let isPlaying: Bool
@@ -95,6 +99,7 @@ struct PlaybackMetadata {
     let queueCount: Int
     let canSkipNext: Bool
     let canSkipPrevious: Bool
+
 }
 
 @MainActor
@@ -138,9 +143,9 @@ final class SystemPlaybackRemoteControls: PlaybackRemoteControlling {
             return
         }
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: metadata.podcast?.episode.title ?? metadata.track?.title ?? "",
-            MPMediaItemPropertyArtist: metadata.podcast?.show.author ?? metadata.track?.artist ?? "",
-            MPMediaItemPropertyAlbumTitle: metadata.podcast?.show.name ?? metadata.track?.album ?? "",
+            MPMediaItemPropertyTitle: metadata.title,
+            MPMediaItemPropertyArtist: metadata.artist,
+            MPMediaItemPropertyAlbumTitle: metadata.album,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: metadata.position,
             MPNowPlayingInfoPropertyPlaybackRate: metadata.isPlaying ? 1.0 : 0.0,

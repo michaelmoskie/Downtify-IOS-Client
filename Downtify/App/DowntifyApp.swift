@@ -10,9 +10,11 @@ struct DowntifyApp: App {
         WindowGroup {
             AppShellView(name: container.displayName, presentation: container.sessionPresentation,
                          library: container.libraryPresentation, playback: container.playback,
-                         serverDownloadQueue: container.serverDownloadQueue)
+                         serverDownloadQueue: container.serverDownloadQueue,
+                         serverDownloads: container.serverDownloads)
                 .environmentObject(container.artwork)
                 .environmentObject(container.collections)
+                .environmentObject(container.catalogPresentation)
                 .task { container.collections.start() }
                 .environmentObject(container.offlineDownloads)
         }

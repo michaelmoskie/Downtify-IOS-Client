@@ -3,6 +3,19 @@ import XCTest
 
 @MainActor
 final class LibraryPresentationModelTests: XCTestCase {
+    func testServerDownloadReconciliationUsesJobStatusAndActiveJobsTakePrecedence() throws {
+        func jobs(_ statuses: [String]) throws -> [ServerDownloadQueue.Job] {
+            let json = statuses.map { "{\"song\":{\"id\":\"song\"},\"status\":\"\($0)\"}" }.joined(separator: ",")
+            return try JSONDecoder().decode([ServerDownloadQueue.Job].self, from: Data("[\(json)]".utf8))
+        }
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["running"])), .queued(jobID: "song"))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["done"])), .accepted)
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["failed"])), .failed("The server download failed."))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["unexpected"])), .outcomeUnknown)
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: try jobs(["failed", "running"])), .queued(jobID: "song"))
+        XCTAssertEqual(ServerDownloadPresentationModel.reconciledState(for: []), nil)
+    }
+
     func testLibraryOrderingAndSearchCoverTitleArtistAndAlbum() {
         let tracks = [
             makeTrack("z", title: "Zebra", artist: "Ada", album: "Night Songs"),
@@ -17,6 +30,144 @@ final class LibraryPresentationModelTests: XCTestCase {
         XCTAssertEqual(LibraryTrackOrdering.matching(sorted, query: "night songs").map(\.id), ["z"])
         XCTAssertTrue(LibraryTrackOrdering.matching(sorted, query: "missing").isEmpty)
         XCTAssertEqual(LibraryTrackOrdering.matching(sorted, query: " "), sorted)
+    }
+
+    func testCatalogSearchDiscardsLateResultForAnOlderQuery() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let gate = CatalogPresentationTestGate()
+        let api = CatalogServingStub(libraryOnly: false, gate: gate)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        model.search("old")
+        await gate.waitUntilStarted()
+        model.search("new")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.title == "new" }
+            return false
+        }
+        await gate.release()
+        try await Task.sleep(for: .milliseconds(20))
+        if case .loaded(let songs) = model.searchSongsState {
+            XCTAssertEqual(songs.map(\.title), ["new"])
+        } else {
+            XCTFail("Expected the latest query results to remain visible")
+        }
+        continuation.finish()
+    }
+
+    func testCatalogSearchDiscardsLateResultAfterAccountChange() async throws {
+        let first = makeSession(server: "first")
+        let second = makeSession(server: "second")
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let gate = CatalogPresentationTestGate()
+        let model = CatalogPresentationModel(api: CatalogServingStub(libraryOnly: false, gate: gate),
+                                             sessionUpdates: { updates })
+        model.start()
+        continuation.yield(first)
+        await waitUntil { model.policyState == .ready }
+        model.search("old")
+        await gate.waitUntilStarted()
+
+        continuation.yield(second)
+        await waitUntil { model.session == second && model.policyState == .ready }
+        await gate.release()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(model.session, second)
+        XCTAssertEqual(model.searchQuery, "")
+        XCTAssertEqual(model.searchSongsState, .idle)
+        continuation.finish()
+    }
+
+    func testLibraryOnlyPolicyKeepsLocalSearchAndDisablesExternalFinderDetails() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let api = CatalogServingStub(libraryOnly: true)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        XCTAssertTrue(model.isLibraryOnly == true)
+        XCTAssertFalse(model.externalCatalogAvailable)
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "library" }
+            return false
+        }
+        model.loadFinderArtist(id: "123")
+        if case .unavailable = model.finderArtistState {
+            // Provider details are disabled while local library results remain usable.
+        } else {
+            XCTFail("Expected provider Finder details to be unavailable")
+        }
+        continuation.finish()
+    }
+
+    func testPolicyRefreshClearsExternalSearchThenAllowsLocalResults() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let policy = CatalogPolicyBox(libraryOnly: false)
+        let model = CatalogPresentationModel(api: CatalogServingStub(policy: policy), sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "youtube" }
+            return false
+        }
+
+        await policy.setLibraryOnly(true)
+        await model.refreshPolicy(for: session)
+        XCTAssertTrue(model.isLibraryOnly == true)
+        XCTAssertEqual(model.searchSongsState, .idle)
+        XCTAssertEqual(model.searchQuery, "Roads")
+
+        model.search("Roads")
+        await waitUntil {
+            if case .loaded(let songs) = model.searchSongsState { return songs.first?.source == "library" }
+            return false
+        }
+        continuation.finish()
+    }
+
+    func testLibraryOnlyDiscoverKeepsArtistsAndDisablesCollections() async throws {
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = CatalogPresentationModel(api: CatalogServingStub(libraryOnly: true, discoverPartial: true), sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.policyState == .ready }
+        model.loadDiscover(library: [], albums: [], playlistNames: [], playlistIDs: [], shown: [])
+        await waitUntil { if case .partial = model.discoverArtistsState { return true }; return false }
+        if case .unavailable = model.deezerCollectionsState {} else { XCTFail("Expected Deezer unavailable") }
+        if case .unavailable = model.spotifyCollectionsState {} else { XCTFail("Expected Spotify unavailable") }
+        continuation.finish()
+    }
+
+    func testDiscoverSectionsKeepPartialSuccessWhenAnotherProviderFails() async throws {
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let api = CatalogServingStub(libraryOnly: false, discoverPartial: true, spotifyFails: true)
+        let model = CatalogPresentationModel(api: api, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.policyState == .ready }
+
+        model.loadDiscover(library: [], albums: [], playlistNames: [], playlistIDs: [], shown: [])
+        await waitUntil {
+            if case .partial = model.discoverArtistsState,
+               case .partial = model.deezerCollectionsState,
+               case .failed = model.spotifyCollectionsState { return true }
+            return false
+        }
+        if case .partial = model.discoverArtistsState {} else { XCTFail("Expected partial artist results") }
+        if case .partial = model.deezerCollectionsState {} else { XCTFail("Expected the successful partial provider section") }
+        if case .failed = model.spotifyCollectionsState {} else { XCTFail("Expected only the failed provider section to fail") }
+        continuation.finish()
     }
 
     func testLoadsCachedTracksBeforeReportingRefreshFailure() async throws {
@@ -138,6 +289,10 @@ final class LibraryPresentationModelTests: XCTestCase {
         ))
         XCTAssertEqual(playlist.title, "Display")
         XCTAssertNil(playlist.favorite)
+        XCTAssertNil(playlist.manual)
+        XCTAssertNil(playlist.canEditTracks)
+        XCTAssertNil(playlist.sharedWith)
+        XCTAssertNil(playlist.editors)
         XCTAssertEqual(catalog.tracks(in: .playlist("stable"), likedIDs: [], playlist: playlist).map(\.id),
                        ["id-2", "id-1", "id-2"])
         XCTAssertEqual(catalog.tracks(in: .liked, likedIDs: ["id-2", "gone", "id-1"], playlist: nil).map(\.id),
@@ -145,6 +300,49 @@ final class LibraryPresentationModelTests: XCTestCase {
         let numbered = LibraryCatalog([makeTrack("z", albumID: "album", trackNumber: 1),
                                        makeTrack("a", albumID: "album", trackNumber: 2)])
         XCTAssertEqual(numbered.tracks(in: .album("album"), likedIDs: [], playlist: nil).map(\.id), ["z", "a"])
+    }
+
+    func testPlaylistOccurrencesPreserveDuplicatesAndUnresolvedIDs() throws {
+        let playlist = try JSONDecoder().decode(LibraryPlaylist.self, from: Data(
+            #"{"name":"stable","track_ids":["known","missing","known"]}"#.utf8
+        ))
+        let catalog = LibraryCatalog([makeTrack("known")])
+
+        let rows = catalog.playlistOccurrences(playlist)
+
+        XCTAssertEqual(rows.map(\.occurrence.trackID), ["known", "missing", "known"])
+        XCTAssertEqual(rows.map(\.occurrence.position), [0, 1, 2])
+        XCTAssertEqual(rows[0].track?.id, "known")
+        XCTAssertNil(rows[1].track)
+        XCTAssertEqual(rows[2].track?.id, "known")
+        XCTAssertNotEqual(rows[0].id, rows[2].id)
+    }
+
+    func testPlaylistCompleteOrderRequiresEveryOccurrenceIncludingUnresolvedIDs() throws {
+        let trackIDs = ["known", "missing", "known"]
+        let original = PlaylistTrackOccurrence.ordered(trackIDs)
+        let reordered = [original[2], original[1], original[0]]
+
+        XCTAssertEqual(PlaylistTrackOccurrence.completeOrder(reordered, matching: trackIDs),
+                       ["known", "missing", "known"])
+        XCTAssertNil(PlaylistTrackOccurrence.completeOrder([original[0], original[2]], matching: trackIDs))
+        XCTAssertNil(PlaylistTrackOccurrence.completeOrder(
+            [original[0], original[1], PlaylistTrackOccurrence(trackID: "extra", position: 3)],
+            matching: trackIDs
+        ))
+    }
+
+    func testPlaylistListingDecodesManualAndPermissionFieldsWhenAvailable() throws {
+        let playlist = try JSONDecoder().decode(LibraryPlaylist.self, from: Data(
+            #"{"name":"shared","track_ids":["song","song"],"manual":true,"mine":false,"can_edit_tracks":true,"shared_with":["listener"],"editors":["listener"]}"#.utf8
+        ))
+
+        XCTAssertEqual(playlist.manual, true)
+        XCTAssertEqual(playlist.mine, false)
+        XCTAssertEqual(playlist.canEditTracks, true)
+        XCTAssertEqual(playlist.sharedWith, ["listener"])
+        XCTAssertEqual(playlist.editors, ["listener"])
+        XCTAssertEqual(playlist.trackIDs, ["song", "song"])
     }
 
     func testOfflineCollectionsRestoreFromAccountCacheAndStayIsolated() async throws {
@@ -201,6 +399,189 @@ final class LibraryPresentationModelTests: XCTestCase {
         continuation.finish()
     }
 
+    func testPlaylistMutationsRefreshAuthoritativeStateAndPreserveOccurrenceArguments() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a", "b", "a"])])
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.playlistState == .ready }
+
+        await model.createPlaylist(name: "New")
+        XCTAssertEqual(model.playlist(named: "New")?.manual, true)
+        await model.renamePlaylist(name: "Road", to: "Drive")
+        XCTAssertNotNil(model.playlist(named: "Drive"))
+        await model.addTracks(["c"], to: "Drive", allowDuplicates: true)
+        XCTAssertEqual(model.playlist(named: "Drive")?.trackIDs, ["a", "b", "a", "c"])
+        await model.removePlaylistOccurrence(trackID: "a", occurrence: 1, from: "Drive")
+        XCTAssertEqual(model.playlist(named: "Drive")?.trackIDs, ["a", "b", "c"])
+        await model.removeTracks(["a"], from: "Drive")
+        XCTAssertEqual(model.playlist(named: "Drive")?.trackIDs, ["b", "c"])
+        await model.reorderPlaylist("Drive", trackIDs: ["c", "b"])
+        XCTAssertEqual(model.playlist(named: "Drive")?.trackIDs, ["c", "b"])
+        XCTAssertNil(model.playlistMutationError)
+
+        let writes = await api.recordedWrites()
+        XCTAssertEqual(writes, [
+            "create:New",
+            "rename:Road:Drive",
+            "edit:Drive:add=c:remove=-:remove_entries=-:allow_duplicates=true",
+            "edit:Drive:add=-:remove=-:remove_entries=a@1:allow_duplicates=-",
+            "edit:Drive:add=-:remove=a:remove_entries=-:allow_duplicates=-",
+            "reorder:Drive:c,b"
+        ])
+        let refreshes = await api.playlistRefreshCount()
+        XCTAssertGreaterThanOrEqual(refreshes, 7)
+        continuation.finish()
+    }
+
+    func testPlaylistMutationErrorsMapAndReorderConflictRefreshesWithoutReplay() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a", "b"])])
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.playlistState == .ready }
+
+        let failures: [(Int, LibraryCollectionsModel.PlaylistMutationError)] = [
+            (400, .invalidRequest), (403, .permissionDenied), (404, .notFound),
+            (503, .libraryIndexUnavailable)
+        ]
+        for (status, expected) in failures {
+            await api.failNextWrite(status: status)
+            await model.addTracks(["c"], to: "Road")
+            XCTAssertEqual(model.playlistMutationError, expected)
+            model.clearPlaylistMutationError()
+        }
+
+        await api.prepareConflict(with: playlist("Road", ids: ["a", "b", "c"]))
+        await model.reorderPlaylist("Road", trackIDs: ["b", "a"])
+        XCTAssertEqual(model.playlistMutationError, .conflictRequiresReview)
+        XCTAssertEqual(model.playlist(named: "Road")?.trackIDs, ["a", "b", "c"])
+        let writes = await api.recordedWrites()
+        XCTAssertEqual(writes.filter { $0.hasPrefix("reorder:") }, ["reorder:Road:b,a"])
+        continuation.finish()
+    }
+
+    func testRenameUpdatesRecentAndOpenPlaylistReferences() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a"])])
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.playlistState == .ready }
+        model.record(.playlist("Road"))
+
+        await model.renamePlaylist(name: "Road", to: "Drive")
+
+        XCTAssertEqual(model.recents, [.playlist("Drive")])
+        XCTAssertEqual(model.playlist(named: "Road")?.name, "Drive")
+        XCTAssertEqual(model.playlist(named: "Drive")?.name, "Drive")
+        continuation.finish()
+    }
+
+    func testStaleCapabilityAndMutationResponsesCannotCrossSessions() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let first = makeSession(server: "one")
+        let second = makeSession(server: "two")
+        let api = PlaylistMutationFeed(playlistsByServer: [
+            "one": [playlist("First", ids: ["a"])],
+            "two": [playlist("Second", ids: ["b"])]
+        ], capabilities: ["one": false, "two": true])
+        await api.pauseCapability(for: "one")
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(first)
+        await waitUntil { model.playlistState == .ready }
+        await waitUntilAsync { await api.capabilityIsWaiting(for: "one") }
+
+        continuation.yield(second)
+        await waitUntil { model.playlist(named: "Second") != nil && model.supportsPlaylistEditing }
+        await api.releaseCapability(for: "one")
+        await waitUntilAsync { !(await api.capabilityIsWaiting(for: "one")) }
+        XCTAssertTrue(model.supportsPlaylistEditing)
+
+        await api.pauseNextWrite()
+        let staleMutation = Task { await model.createPlaylist(name: "Stale") }
+        await waitUntilAsync { await api.writeIsWaiting() }
+        continuation.yield(first)
+        await waitUntil { model.playlist(named: "First") != nil && !model.mutationBusy }
+        await api.releaseWrite()
+        await staleMutation.value
+        XCTAssertEqual(model.playlists?.map(\.name), ["First"])
+        XCTAssertFalse(model.playlists?.contains(where: { $0.name == "Stale" }) ?? true)
+        continuation.finish()
+    }
+
+    func testPlaylistChangeNotificationRefreshesOpenCollectionAndCoalescesWithMutation() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a"])])
+        let (collectionUpdates, collectionContinuation) = AsyncStream<DeviceSession?>.makeStream()
+        let (coordinatorUpdates, coordinatorContinuation) = AsyncStream<DeviceSession?>.makeStream()
+        let collections = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { collectionUpdates })
+        collections.start()
+        collectionContinuation.yield(session)
+        coordinatorContinuation.yield(session)
+        await waitUntil { collections.playlistState == .ready }
+
+        let (events, eventContinuation) = AsyncThrowingStream<LibraryLiveEvent, Error>.makeStream()
+        let socketReady = expectation(description: "Collections event stream opened")
+        let deferredNotificationHandled = expectation(description: "Notification was handled during the mutation")
+        let notificationCallbackCount = NotificationCallbackCount()
+        let coordinator = LibrarySyncCoordinator(
+            repository: LibraryRepository(database: database, feed: Feed([]), session: { session }),
+            events: TestCollectionsSocket(stream: events, ready: socketReady),
+            sessionUpdates: { coordinatorUpdates },
+            verifySession: { _ in .active },
+            didChangeCollections: { expectedSession in
+                await collections.refresh(for: expectedSession)
+                if await notificationCallbackCount.increment() == 2 {
+                    deferredNotificationHandled.fulfill()
+                }
+            }
+        )
+        let worker = Task { await coordinator.runWhileActive() }
+        await fulfillment(of: [socketReady], timeout: 3)
+        eventContinuation.yield(.connected)
+        await waitUntilAsync { await api.playlistRefreshCount() >= 2 }
+
+        await api.replacePlaylists([playlist("Road", ids: ["a", "from-notification"])])
+        eventContinuation.yield(.collectionsChanged)
+        await waitUntil { collections.playlist(named: "Road")?.trackIDs == ["a", "from-notification"] }
+        XCTAssertEqual(collections.playlist(named: "Road")?.trackIDs, ["a", "from-notification"])
+
+        await api.pauseNextWrite()
+        let mutation = Task { await collections.addTracks(["after-notification"], to: "Road") }
+        await waitUntilAsync { await api.writeIsWaiting() }
+        await api.replacePlaylists([playlist("Road", ids: ["a", "remote-change"])])
+        eventContinuation.yield(.collectionsChanged)
+        await fulfillment(of: [deferredNotificationHandled], timeout: 3)
+        await api.releaseWrite()
+        await mutation.value
+
+        XCTAssertEqual(collections.playlist(named: "Road")?.trackIDs, ["a", "remote-change", "after-notification"])
+        XCTAssertNil(collections.playlistMutationError)
+
+        collectionContinuation.finish()
+        coordinatorContinuation.finish()
+        eventContinuation.finish()
+        worker.cancel()
+        await worker.value
+    }
+
     private func makeDatabase() throws -> (LibraryDatabase, URL) {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -216,6 +597,11 @@ final class LibraryPresentationModelTests: XCTestCase {
         let deadline = ContinuousClock.now + .seconds(1)
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }
     }
+
+    private func waitUntilAsync(_ condition: @escaping () async -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(1)
+        while !(await condition()), ContinuousClock.now < deadline { await Task.yield() }
+    }
 }
 
 private struct Feed: LibraryFeedFetching {
@@ -230,6 +616,24 @@ private struct Feed: LibraryFeedFetching {
             return .page(LibraryPage(cursor: cursor, full: full, tracks: tracks, deleted: []), etag: nil)
         case .failure: throw APIError.transportFailure
         }
+    }
+}
+
+private struct TestCollectionsSocket: LibraryEventStreaming {
+    let stream: AsyncThrowingStream<LibraryLiveEvent, Error>
+    let ready: XCTestExpectation
+
+    func events(for session: DeviceSession) async throws -> AsyncThrowingStream<LibraryLiveEvent, Error> {
+        ready.fulfill()
+        return stream
+    }
+}
+
+private actor NotificationCallbackCount {
+    private var count = 0
+    func increment() -> Int {
+        count += 1
+        return count
     }
 }
 
@@ -251,6 +655,145 @@ private struct CollectionsFeed: LibraryCollectionsFetching {
     func likes(for session: DeviceSession) async throws -> [String] { throw APIError.transportFailure }
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws { throw APIError.transportFailure }
     func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws { throw APIError.transportFailure }
+}
+
+private actor PlaylistMutationFeed: LibraryCollectionsFetching {
+    private var playlistsByServer: [String: [LibraryPlaylist]]
+    private let capabilities: [String: Bool]
+    private var writes: [String] = []
+    private var refreshCount = 0
+    private var nextWriteStatus: Int?
+    private var conflictPlaylists: [String: LibraryPlaylist] = [:]
+    private var pausedCapabilityIDs: Set<String> = []
+    private var capabilityContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var capabilityWaiters: Set<String> = []
+    private var pauseWrite = false
+    private var writeContinuation: CheckedContinuation<Void, Never>?
+    private var writeWaiting = false
+
+    init(playlists: [LibraryPlaylist]) {
+        self.playlistsByServer = ["server": playlists]
+        self.capabilities = [:]
+    }
+
+    init(playlistsByServer: [String: [LibraryPlaylist]], capabilities: [String: Bool]) {
+        self.playlistsByServer = playlistsByServer
+        self.capabilities = capabilities
+    }
+
+    func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
+        refreshCount += 1
+        return playlistsByServer[session.serverID] ?? []
+    }
+
+    func likes(for session: DeviceSession) async throws -> [String] { [] }
+    func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool {
+        if pausedCapabilityIDs.contains(session.serverID) {
+            capabilityWaiters.insert(session.serverID)
+            await withCheckedContinuation { capabilityContinuations[session.serverID] = $0 }
+            capabilityWaiters.remove(session.serverID)
+        }
+        return capabilities[session.serverID] ?? false
+    }
+    func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws {}
+    func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws {}
+
+    func createPlaylist(name: String, session: DeviceSession) async throws {
+        writes.append("create:\(name)")
+        try await pauseOrFail()
+        playlistsByServer[session.serverID, default: []].append(playlist(name, ids: []))
+    }
+
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws {
+        writes.append("rename:\(name):\(newName)")
+        try await pauseOrFail()
+        replacePlaylist(named: name, with: newName, session: session)
+    }
+
+    func editPlaylistTracks(
+        name: String, add: [String]?, remove: [String]?,
+        removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?, allowDuplicates: Bool?, session: DeviceSession
+    ) async throws {
+        let entries = removeEntries.map { $0.map { "\($0.trackID)@\($0.occurrence)" }.joined(separator: ",") } ?? "-"
+        let additions = add.map { $0.joined(separator: ",") } ?? "-"
+        let removals = remove.map { $0.joined(separator: ",") } ?? "-"
+        let duplicateFlag = allowDuplicates.map { $0 ? "true" : "false" } ?? "-"
+        writes.append("edit:\(name):add=\(additions):remove=\(removals):remove_entries=\(entries):allow_duplicates=\(duplicateFlag)")
+        try await pauseOrFail()
+        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }),
+              let current = playlistsByServer[session.serverID]?[index] else { return }
+        var ids = current.trackIDs
+        for id in add ?? [] where allowDuplicates == true || !ids.contains(id) { ids.append(id) }
+        for id in remove ?? [] { ids.removeAll { $0 == id } }
+        for entry in (removeEntries ?? []).reversed() {
+            let positions = ids.indices.filter { ids[$0] == entry.trackID }
+            if entry.occurrence < positions.count { ids.remove(at: positions[entry.occurrence]) }
+        }
+        playlistsByServer[session.serverID]?[index] = playlist(name, ids: ids)
+    }
+
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws {
+        writes.append("reorder:\(name):\(trackIDs.joined(separator: ","))")
+        try await pauseOrFail()
+        if let conflict = conflictPlaylists.removeValue(forKey: session.serverID) {
+            if let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) {
+                playlistsByServer[session.serverID]?[index] = conflict
+            }
+            throw APIError.httpStatus(409, retryAfter: nil)
+        }
+        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) else { return }
+        playlistsByServer[session.serverID]?[index] = playlist(name, ids: trackIDs)
+    }
+
+    func failNextWrite(status: Int) { nextWriteStatus = status }
+    func prepareConflict(with playlist: LibraryPlaylist, serverID: String = "server") {
+        conflictPlaylists[serverID] = playlist
+    }
+    func recordedWrites() -> [String] { writes }
+    func playlistRefreshCount() -> Int { refreshCount }
+    func pauseCapability(for serverID: String) {
+        pausedCapabilityIDs.insert(serverID)
+    }
+    func capabilityIsWaiting(for serverID: String) -> Bool { capabilityWaiters.contains(serverID) }
+    func releaseCapability(for serverID: String) {
+        pausedCapabilityIDs.remove(serverID)
+        capabilityContinuations.removeValue(forKey: serverID)?.resume()
+    }
+    func pauseNextWrite() { pauseWrite = true }
+    func writeIsWaiting() -> Bool { writeWaiting }
+    func releaseWrite() {
+        writeContinuation?.resume()
+        writeContinuation = nil
+    }
+
+    func replacePlaylists(_ playlists: [LibraryPlaylist], serverID: String = "server") {
+        playlistsByServer[serverID] = playlists
+    }
+
+    private func pauseOrFail() async throws {
+        if pauseWrite {
+            pauseWrite = false
+            writeWaiting = true
+            await withCheckedContinuation { writeContinuation = $0 }
+            writeWaiting = false
+        }
+        if let status = nextWriteStatus {
+            nextWriteStatus = nil
+            throw APIError.httpStatus(status, retryAfter: nil)
+        }
+    }
+
+    private func replacePlaylist(named oldName: String, with newName: String, session: DeviceSession) {
+        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == oldName }),
+              let current = playlistsByServer[session.serverID]?[index] else { return }
+        playlistsByServer[session.serverID]?[index] = playlist(newName, ids: current.trackIDs)
+    }
+}
+
+private func playlist(_ name: String, ids: [String]) -> LibraryPlaylist {
+    let trackIDs = ids.map { "\"\($0)\"" }.joined(separator: ",")
+    let data = Data("{\"name\":\"\(name)\",\"track_ids\":[\(trackIDs)],\"manual\":true,\"mine\":true,\"can_edit_tracks\":true}".utf8)
+    return try! JSONDecoder().decode(LibraryPlaylist.self, from: data)
 }
 
 private actor CollectionsHTTP: HTTPDataLoading {
@@ -297,4 +840,104 @@ private actor CollectionsHTTP: HTTPDataLoading {
         }
         return (Data(body.utf8), try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
     }
+}
+
+private actor CatalogPresentationTestGate {
+    private var hasStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        hasStarted = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
+private actor CatalogPolicyBox {
+    private var libraryOnly: Bool
+
+    init(libraryOnly: Bool) { self.libraryOnly = libraryOnly }
+    func currentLibraryOnly() -> Bool { libraryOnly }
+    func setLibraryOnly(_ value: Bool) { libraryOnly = value }
+}
+
+private struct CatalogServingStub: CatalogServing {
+    let policy: CatalogPolicyBox
+    var discoverPartial = false
+    var spotifyFails = false
+    var gate: CatalogPresentationTestGate?
+
+    init(libraryOnly: Bool, discoverPartial: Bool = false, spotifyFails: Bool = false,
+         gate: CatalogPresentationTestGate? = nil) {
+        policy = CatalogPolicyBox(libraryOnly: libraryOnly)
+        self.discoverPartial = discoverPartial
+        self.spotifyFails = spotifyFails
+        self.gate = gate
+    }
+
+    init(policy: CatalogPolicyBox) { self.policy = policy }
+
+    func serverInfo(session: DeviceSession) async throws -> MobileAPIV1.ServerInfoDTO {
+        let libraryOnly = await policy.currentLibraryOnly()
+        let fixture = """
+        {"product":"Downtify","api_version":1,"server_id":"\(session.serverID)","library_only":\(libraryOnly),"capabilities":{"discover":true}}
+        """
+        return try JSONDecoder().decode(MobileAPIV1.ServerInfoDTO.self, from: Data(fixture.utf8))
+    }
+
+    func searchSongs(query: String, session: DeviceSession) async throws -> [CatalogSong] {
+        if query == "old" { await gate?.suspend() }
+        let libraryOnly = await policy.currentLibraryOnly()
+        return [try makeCatalogSong(title: query, source: libraryOnly ? "library" : "youtube")]
+    }
+
+    func searchAlbums(query: String, limit: Int, session: DeviceSession) async throws -> [CatalogAlbum] { [] }
+    func searchArtists(query: String, session: DeviceSession) async throws -> [CatalogArtist] { [] }
+    func search(query: String, albumLimit: Int, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func resolve(url: String, session: DeviceSession) async throws -> URLResolution { throw CatalogAPIError.featureUnavailable }
+    func preview(artist: String, title: String, duration: Double?, session: DeviceSession) async throws -> URL? { nil }
+    func finderSearch(query: String, limit: Int, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func finderArtist(id: String, language: String, session: DeviceSession) async throws -> CatalogFinderArtist { throw CatalogAPIError.featureUnavailable }
+    func finderArtistSongs(id: String, name: String, session: DeviceSession) async throws -> CatalogSearchResults { .init() }
+    func finderArtistAlbums(id: String, session: DeviceSession) async throws -> [CatalogAlbum] { [] }
+    func finderAlbumTrackCounts(ids: [String], session: DeviceSession) async throws -> [String: Int] { [:] }
+    func finderAlbum(id: String, session: DeviceSession) async throws -> CatalogFinderAlbum { throw CatalogAPIError.featureUnavailable }
+    func charts(limit: Int, session: DeviceSession) async throws -> CatalogCharts {
+        CatalogCharts(tracks: [], albums: [], artists: [], playlists: [])
+    }
+    func similar(artist: String, track: String, limit: Int, session: DeviceSession) async throws -> CatalogSimilarResults {
+        CatalogSimilarResults(artist: artist, track: track, source: "library", tracks: [])
+    }
+    func discover(library: [CatalogLibraryArtist], session: DeviceSession) async throws -> CatalogDiscoverResults {
+        CatalogDiscoverResults(artists: [], seeds: [], partial: discoverPartial)
+    }
+    func deezerCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistNames: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
+        CatalogCollectionsResults(source: "deezer", albums: [], moreAlbums: [], playlists: [], partial: discoverPartial)
+    }
+    func spotifyCollections(library: [CatalogLibraryArtist], albums: [CatalogLibraryAlbum], playlistIDs: [String], shown: [String], session: DeviceSession) async throws -> CatalogCollectionsResults {
+        if spotifyFails { throw APIError.httpStatus(502, retryAfter: nil) }
+        return CatalogCollectionsResults(source: "spotify", albums: [], moreAlbums: [], playlists: [], partial: false)
+    }
+    func blockedArtists(session: DeviceSession) async throws -> [CatalogBlockedArtist] { [] }
+    func blockArtist(name: String, session: DeviceSession) async throws -> CatalogBlockedArtist {
+        CatalogBlockedArtist(name: name, blockedAt: "")
+    }
+    func unblockArtist(name: String, session: DeviceSession) async throws {}
+}
+
+private func makeCatalogSong(title: String, source: String) throws -> CatalogSong {
+    let fixture = #"{"source":"\#(source)","song_id":"\#(title)","name":"\#(title)","artists":["Artist"],"url":""}"#
+    return try JSONDecoder().decode(CatalogSong.self, from: Data(fixture.utf8))
 }

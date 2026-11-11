@@ -1,13 +1,58 @@
 import CryptoKit
 import Foundation
 
+enum PlaybackItem: Sendable, Equatable {
+    case library(LibraryTrack)
+    case catalog(CatalogSong)
+
+    var libraryTrack: LibraryTrack? {
+        if case .library(let track) = self { return track }
+        return nil
+    }
+
+    var catalogSong: CatalogSong? {
+        if case .catalog(let song) = self { return song }
+        return nil
+    }
+
+    var title: String { libraryTrack?.title ?? catalogSong?.title ?? "" }
+    var artist: String { libraryTrack?.artist ?? catalogSong?.artist ?? "" }
+    var artists: [String] { libraryTrack?.artists ?? catalogSong?.artists ?? [] }
+    var album: String { libraryTrack?.album ?? catalogSong?.albumName ?? "" }
+    var duration: Double? {
+        switch self {
+        case .library(let track): track.duration > 0 ? track.duration : nil
+        case .catalog(let song): song.duration
+        }
+    }
+    var artworkURL: String? { catalogSong?.coverURL }
+
+    static func resolving(_ song: CatalogSong, in scopedTracks: [LibraryTrack]) -> PlaybackItem {
+        if let track = song.libraryTrack(in: scopedTracks) { return .library(track) }
+        return .catalog(song)
+    }
+}
+
 struct PlaybackQueueEntry: Equatable, Identifiable, Sendable {
     let id: UUID
-    let track: LibraryTrack
+    let item: PlaybackItem
+
+    // Retained for existing library-only callers while catalog playback migrates to item.
+    var track: LibraryTrack {
+        guard let track = item.libraryTrack else {
+            preconditionFailure("Catalog queue entries do not have a library track")
+        }
+        return track
+    }
 
     init(id: UUID = UUID(), track: LibraryTrack) {
         self.id = id
-        self.track = track
+        self.item = .library(track)
+    }
+
+    init(id: UUID = UUID(), item: PlaybackItem) {
+        self.id = id
+        self.item = item
     }
 }
 
@@ -36,16 +81,55 @@ struct PlaybackQueue {
     }
 
     mutating func replace(_ tracks: [LibraryTrack], startingAt index: Int) {
-        entries = tracks.map { PlaybackQueueEntry(track: $0) }
+        replace(tracks.map(PlaybackItem.library), startingAt: index)
+    }
+
+    mutating func replace(_ items: [PlaybackItem], startingAt index: Int) {
+        entries = items.map { PlaybackQueueEntry(item: $0) }
         currentID = entries.indices.contains(index) ? entries[index].id : entries.first?.id
         if shuffledIDs != nil { shuffle() }
     }
 
     mutating func append(_ tracks: [LibraryTrack]) {
-        let added = tracks.map { PlaybackQueueEntry(track: $0) }
+        append(tracks.map(PlaybackItem.library))
+    }
+
+    mutating func append(_ items: [PlaybackItem]) {
+        let added = items.map { PlaybackQueueEntry(item: $0) }
         entries.append(contentsOf: added)
         shuffledIDs?.append(contentsOf: added.map(\.id))
         if currentID == nil { currentID = order.first?.id }
+    }
+
+    mutating func applyLibraryOnlyPolicy(_ libraryOnly: Bool, tracks: [LibraryTrack]) {
+        guard libraryOnly else { return }
+        let oldOrder = order
+        let oldCurrentIndex = currentIndex
+        var retainedIDs = Set<UUID>()
+        entries = entries.compactMap { entry in
+            let item: PlaybackItem
+            switch entry.item {
+            case .library:
+                item = entry.item
+            case .catalog(let song) where song.source == "library":
+                guard let track = song.libraryTrack(in: tracks) else { return nil }
+                item = .library(track)
+            case .catalog:
+                return nil
+            }
+            retainedIDs.insert(entry.id)
+            return PlaybackQueueEntry(id: entry.id, item: item)
+        }
+        shuffledIDs = shuffledIDs.map { $0.filter(retainedIDs.contains) }
+
+        if let currentID, retainedIDs.contains(currentID) { return }
+        guard let oldCurrentIndex else {
+            currentID = order.first?.id
+            return
+        }
+        let following = oldOrder.dropFirst(oldCurrentIndex + 1).first { retainedIDs.contains($0.id) }
+        let preceding = oldOrder.prefix(oldCurrentIndex).last { retainedIDs.contains($0.id) }
+        currentID = following?.id ?? preceding?.id
     }
 
     mutating func remove(_ id: UUID) {
@@ -105,7 +189,12 @@ struct PlaybackQueue {
 
     func saved(position: TimeInterval, listen: PlaybackListenProgress? = nil) -> SavedPlaybackQueue {
         SavedPlaybackQueue(
-            entries: entries.map { .init(id: $0.id, trackID: $0.track.id) },
+            entries: entries.map { entry in
+                switch entry.item {
+                case .library(let track): .init(id: entry.id, trackID: track.id)
+                case .catalog(let song): .init(id: entry.id, catalogSong: song)
+                }
+            },
             shuffledIDs: shuffledIDs, currentID: currentID, position: position, repeatMode: repeatMode, listen: listen
         )
     }
@@ -114,8 +203,23 @@ struct PlaybackQueue {
         let tracksByID = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var ids = Set<UUID>()
         entries = saved.entries.compactMap { entry in
-            guard let track = tracksByID[entry.trackID], ids.insert(entry.id).inserted else { return nil }
-            return PlaybackQueueEntry(id: entry.id, track: track)
+            guard !ids.contains(entry.id) else { return nil }
+            let restored: PlaybackQueueEntry?
+            if let song = entry.catalogSong {
+                let item: PlaybackItem
+                if song.source == "library" {
+                    guard let track = song.libraryTrack(in: tracks) else { return nil }
+                    item = .library(track)
+                } else {
+                    item = .catalog(song)
+                }
+                restored = PlaybackQueueEntry(id: entry.id, item: item)
+            } else {
+                guard let trackID = entry.trackID, let track = tracksByID[trackID] else { return nil }
+                restored = PlaybackQueueEntry(id: entry.id, track: track)
+            }
+            if restored != nil { ids.insert(entry.id) }
+            return restored
         }
         shuffledIDs = saved.shuffledIDs.map { order in
             var remaining = ids
@@ -130,7 +234,40 @@ struct PlaybackQueue {
 struct SavedPlaybackQueue: Codable, Equatable {
     struct Entry: Codable, Equatable {
         let id: UUID
-        let trackID: String
+        let trackID: String?
+        let catalogSong: CatalogSong?
+
+        init(id: UUID, trackID: String) {
+            self.id = id
+            self.trackID = trackID
+            catalogSong = nil
+        }
+
+        init(id: UUID, catalogSong: CatalogSong) {
+            self.id = id
+            trackID = nil
+            self.catalogSong = catalogSong
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, trackID, catalogSong }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            trackID = try container.decodeIfPresent(String.self, forKey: .trackID)
+            catalogSong = try container.decodeIfPresent(CatalogSong.self, forKey: .catalogSong)
+            guard trackID != nil || catalogSong != nil else {
+                throw DecodingError.dataCorruptedError(forKey: .trackID, in: container,
+                                                       debugDescription: "Queue entry requires a track ID or catalog song")
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encodeIfPresent(trackID, forKey: .trackID)
+            try container.encodeIfPresent(catalogSong, forKey: .catalogSong)
+        }
     }
 
     let entries: [Entry]

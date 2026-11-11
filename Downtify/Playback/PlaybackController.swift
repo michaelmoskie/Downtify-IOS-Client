@@ -65,7 +65,10 @@ final class PlaybackController: ObservableObject {
     private var loadedFromDisk = false
     private var loadGeneration = 0
     private var prefetchTask: Task<Void, Never>?
-    private var prefetchedTracks: [LibraryTrack] = []
+    private var prefetchedPlan: [PlaybackItem] = []
+    private var consecutiveUnplayableFailures = 0
+    private var libraryOnlyPolicy = false
+    private var libraryReportingActive = false
     private var listen: PlaybackListenProgress?
     private var lastListenPosition: TimeInterval?
     private var lastSavedListenElapsed: TimeInterval = 0
@@ -138,6 +141,7 @@ final class PlaybackController: ObservableObject {
         suspendedMusicPosition = 0
         engine.setNormalization(normalization)
         session = newSession
+        libraryOnlyPolicy = false
         reporting?.update(session: newSession, online: network != .unavailable)
         resetListen()
         wantsPlayback = false
@@ -155,6 +159,7 @@ final class PlaybackController: ObservableObject {
         guard let tracks = try? await tracks(), !Task.isCancelled, session == newSession,
               !queueReadyForPersistence else { return }
         let restoredPosition = queue.restore(saved, tracks: tracks)
+        if libraryOnlyPolicy { queue.applyLibraryOnlyPolicy(true, tracks: tracks) }
         if queue.currentID == saved.currentID {
             listen = saved.listen
             lastSavedListenElapsed = listen?.elapsed ?? 0
@@ -164,7 +169,7 @@ final class PlaybackController: ObservableObject {
             suspendedMusicPosition = restoredPosition
             return
         }
-        duration = knownDuration(queue.current?.track)
+        duration = knownDuration(queue.current?.item.duration)
         position = boundedPosition(restoredPosition)
         if queue.current != nil {
             phase = duration.map { position >= $0 } == true ? .ended : .paused
@@ -236,7 +241,7 @@ final class PlaybackController: ObservableObject {
         wantsPlayback = false
         resumeAfterInterruption = false
         resumeAfterNetworkFailure = false
-        duration = knownDuration(queue.current?.track)
+        duration = knownDuration(queue.current?.item.duration)
         position = boundedPosition(suspendedMusicPosition)
         if queue.current == nil {
             phase = .idle
@@ -281,19 +286,48 @@ final class PlaybackController: ObservableObject {
     }
 
     func replaceQueue(_ tracks: [LibraryTrack], startingAt index: Int = 0, autoplay: Bool = true) {
-        queue.replace(tracks, startingAt: index)
+        replaceQueue(tracks.map(PlaybackItem.library), startingAt: index, autoplay: autoplay)
+    }
+
+    func replaceQueue(_ items: [PlaybackItem], startingAt index: Int = 0, autoplay: Bool = true) {
+        queue.replace(items, startingAt: index)
+        consecutiveUnplayableFailures = 0
         didSelect(autoplay: autoplay)
     }
 
-    func append(_ tracks: [LibraryTrack]) {
-        guard !tracks.isEmpty else { return }
+    func append(_ tracks: [LibraryTrack]) { append(tracks.map(PlaybackItem.library)) }
+
+    func append(_ items: [PlaybackItem]) {
+        guard !items.isEmpty else { return }
         let hadCurrent = queue.current != nil
-        queue.append(tracks)
+        queue.append(items)
         if hadCurrent || podcast != nil {
             didEditQueue()
         } else {
             didSelect(autoplay: false)
         }
+    }
+
+    func applyLibraryOnlyPolicy(_ enabled: Bool, tracks: [LibraryTrack]) {
+        let previousID = queue.currentID
+        let previousItem = queue.current?.item
+        let oldEntries = queue.entries
+        let changed = libraryOnlyPolicy != enabled
+        libraryOnlyPolicy = enabled
+        guard enabled else { return }
+        queue.applyLibraryOnlyPolicy(true, tracks: tracks)
+        let queueChanged = oldEntries != queue.entries || previousID != queue.currentID
+        if changed || queueChanged { cancelPrefetch() }
+        guard queueChanged else { return }
+        consecutiveUnplayableFailures = 0
+        let currentChanged = previousID != queue.currentID || previousItem != queue.current?.item
+        guard currentChanged else { didEditQueue(); return }
+        if podcast != nil {
+            didEditQueue()
+        } else if queue.current == nil {
+            stopEngine(); wantsPlayback = false; audioSession.deactivate()
+            phase = .idle; position = 0; duration = nil; resetListen(); didEditQueue()
+        } else { didSelect(autoplay: wantsPlayback) }
     }
 
     func remove(_ id: UUID) {
@@ -362,6 +396,7 @@ final class PlaybackController: ObservableObject {
     func play() {
         guard (podcast != nil || queue.current != nil), !wantsPlayback else { return }
         resumeAfterNetworkFailure = false
+        if case .failed = phase { consecutiveUnplayableFailures = 0 }
         if isInterrupted {
             resumeAfterInterruption = true
             return
@@ -466,7 +501,7 @@ final class PlaybackController: ObservableObject {
         resumeAfterInterruption = false
         resumeAfterNetworkFailure = false
         position = 0
-        duration = knownDuration(queue.current?.track)
+        duration = knownDuration(queue.current?.item.duration)
         phase = queue.current == nil ? .idle : .paused
         if !autoplay { reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0) }
         didEditQueue()
@@ -484,8 +519,8 @@ final class PlaybackController: ObservableObject {
 
     private func loadCurrent() {
         let episode = podcast?.episode
-        let track = queue.current?.track
-        guard episode != nil || track != nil else { return }
+        let item = queue.current?.item
+        guard episode != nil || item != nil else { return }
         guard let session else { fail(.signedOut); return }
         stopEngine()
         let generation = loadGeneration
@@ -499,9 +534,12 @@ final class PlaybackController: ObservableObject {
                 let stream: PlaybackStream
                 if let episode {
                     stream = try await podcasts.stream(episode: episode, session: session)
-                } else if let track {
+                } else if let track = item?.libraryTrack {
                     if let cache { await cache.resize(to: buffering.byteLimit) }
                     stream = try await resolver.resolve(track: track, quality: quality, session: session)
+                } else if let song = item?.catalogSong {
+                    guard !libraryOnlyPolicy else { throw CatalogAPIError.libraryOnly }
+                    stream = try await resolver.resolve(catalogSong: song, quality: quality, session: session)
                 } else {
                     return
                 }
@@ -524,6 +562,7 @@ final class PlaybackController: ObservableObject {
                 return
             } catch {
                 guard loadGeneration == generation, !Task.isCancelled else { return }
+                if item?.catalogSong != nil, isSkippableCatalogFailure(error), skipFailedCatalogItem() { return }
                 fail(.from(error))
             }
         }
@@ -580,6 +619,7 @@ final class PlaybackController: ObservableObject {
         switch event {
         case .playing:
             guard wantsPlayback, loaded else { return }
+            consecutiveUnplayableFailures = 0
             if phase != .playing { lastListenPosition = position }
             phase = .playing
             if listen == nil, reporting != nil {
@@ -618,6 +658,8 @@ final class PlaybackController: ObservableObject {
             if let duration { position = duration }
             persist()
         case let .failed(failure):
+            if queue.current?.item.catalogSong != nil,
+               isSkippableCatalogFailure(failure), skipFailedCatalogItem() { return }
             fail(failure)
             return
         }
@@ -728,29 +770,35 @@ final class PlaybackController: ObservableObject {
 
     private func publishMetadata() {
         if let podcast {
-            remote.publish(PlaybackMetadata(track: nil, podcast: podcast, position: position, duration: duration,
+            remote.publish(PlaybackMetadata(item: nil, podcast: podcast, position: position, duration: duration,
                                             isPlaying: phase == .playing, wantsPlayback: wantsPlayback,
                                             queueIndex: 0, queueCount: 1, canSkipNext: false, canSkipPrevious: false))
             return
         }
         let metadata = queue.current.flatMap { entry in
             queue.currentIndex.map { index in
-                PlaybackMetadata(track: entry.track, position: position, duration: duration, isPlaying: phase == .playing,
+                PlaybackMetadata(item: entry.item, position: position, duration: duration, isPlaying: phase == .playing,
                                  wantsPlayback: wantsPlayback, queueIndex: index, queueCount: queue.entries.count,
                                  canSkipNext: queue.next(automatic: false) != nil,
                                  canSkipPrevious: position > 0 || queue.previous() != nil)
             }
         }
         remote.publish(metadata)
-        switch phase {
-        case .playing:
-            reporting?.publish(state: .playing, track: metadata?.track, duration: duration, position: position)
-        case .paused:
-            reporting?.publish(state: .paused, track: metadata?.track, duration: duration, position: position)
-        case .idle, .ended, .failed:
+        if queue.current?.item.libraryTrack != nil {
+            libraryReportingActive = true
+            switch phase {
+            case .playing:
+                reporting?.publish(state: .playing, track: queue.current?.item.libraryTrack, duration: duration, position: position)
+            case .paused:
+                reporting?.publish(state: .paused, track: queue.current?.item.libraryTrack, duration: duration, position: position)
+            case .idle, .ended, .failed(_):
+                reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0)
+            case .loading, .buffering:
+                break
+            }
+        } else if libraryReportingActive {
             reporting?.publish(state: .stopped, track: nil, duration: nil, position: 0)
-        case .loading, .buffering:
-            break
+            libraryReportingActive = false
         }
     }
 
@@ -769,7 +817,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func enqueueQualifiedListen() {
-        guard let track = queue.current?.track, let scope, let reporting, var listen,
+        guard let track = queue.current?.item.libraryTrack, let scope, let reporting, var listen,
               !listen.enqueued, listen.qualifies(duration: duration) else { return }
         // Checkpoint the play ID before making its first report visible to the worker.
         persist()
@@ -786,36 +834,62 @@ final class PlaybackController: ObservableObject {
     private func cancelPrefetch() {
         prefetchTask?.cancel()
         prefetchTask = nil
-        prefetchedTracks = []
+        prefetchedPlan = []
     }
 
     private func prefetchUpcoming() {
         guard podcast == nil, phase == .playing, let cache, let session else { return }
-        let upcoming = buffering.upcoming(in: queue, on: network)
-        let warmOnly = upcoming.isEmpty && network != .unavailable && preferredQuality != .original
+        let upcoming = buffering.upcomingItems(in: queue, on: network)
+        let warmOnly = upcoming.isEmpty && network != .unavailable &&
+            (network != .cellular || buffering.readAheadOnCellular) && preferredQuality != .original
         let next = warmOnly ? queue.next(automatic: true) : nil
-        let nextTrack = next.flatMap { id in queue.entries.first { $0.id == id }?.track }
-        let planned = nextTrack.flatMap { $0.id == queue.current?.track.id ? nil : [$0] } ?? upcoming
-        guard planned != prefetchedTracks else { return }
+        let nextItem = next.flatMap { id in queue.entries.first { $0.id == id }?.item }
+        let planned = nextItem.flatMap { $0 == queue.current?.item ? nil : [$0] } ?? upcoming
+        guard planned != prefetchedPlan else { return }
         cancelPrefetch()
-        prefetchedTracks = planned
+        prefetchedPlan = planned
         let quality = preferredQuality
         let resolver = resolver
         let byteLimit = buffering.byteLimit
         prefetchTask = Task(priority: .utility) {
             await cache.resize(to: byteLimit)
-            for track in planned {
+            for item in planned {
                 guard !Task.isCancelled else { return }
                 if warmOnly {
-                    try? await resolver.warmTranscode(track: track, quality: quality, session: session)
+                    if let track = item.libraryTrack {
+                        try? await resolver.warmTranscode(track: track, quality: quality, session: session)
+                    }
                     continue
                 }
-                guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
-                      stream.fileURL == nil, !Task.isCancelled else { continue }
-                // Resolving the ranged URL also materializes supported transcodes on the server.
-                _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
+                if let track = item.libraryTrack {
+                    guard let stream = try? await resolver.resolve(track: track, quality: quality, session: session),
+                          stream.fileURL == nil, !Task.isCancelled else { continue }
+                    _ = try? await stream.read(0...(min(PlaybackCache.blockSize, stream.length) - 1))
+                } else if let song = item.catalogSong, !libraryOnlyPolicy {
+                    try? await resolver.prefetch(catalogSong: song, session: session)
+                }
             }
         }
+    }
+
+    private func isSkippableCatalogFailure(_ error: Error) -> Bool {
+        if let failure = error as? PlaybackFailure {
+            return failure == .invalidStream || failure == .unsupportedFormat || failure == .media
+        }
+        if let error = error as? CatalogAPIError {
+            return error == .invalidInput
+        }
+        return false
+    }
+
+    private func skipFailedCatalogItem() -> Bool {
+        consecutiveUnplayableFailures += 1
+        guard consecutiveUnplayableFailures < 3, let next = queue.next(automatic: false), next != queue.currentID else {
+            fail(.invalidStream)
+            return true
+        }
+        advance(to: next)
+        return true
     }
 
     private func boundedPosition(_ seconds: TimeInterval) -> TimeInterval {

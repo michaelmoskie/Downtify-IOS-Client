@@ -13,13 +13,16 @@ enum MobileAPIV1 {
             let signedURLs: Bool?
             let passwordSignIn: Bool?
             let podcasts: Bool?
+            let discover: Bool?
             let lyrics: Bool?
+            let playlistEditing: Bool?
             let transcoding: Transcoding?
 
             enum CodingKeys: String, CodingKey {
                 case signedURLs = "signed_urls"
                 case passwordSignIn = "password_sign_in"
-                case podcasts, lyrics
+                case playlistEditing = "playlist_editing"
+                case podcasts, discover, lyrics
                 case transcoding
             }
         }
@@ -28,6 +31,7 @@ enum MobileAPIV1 {
         let apiVersion: Int
         let serverID: String
         let name: String?
+        let libraryOnly: Bool?
         let capabilities: Capabilities?
 
         var supportsPasswordSignIn: Bool {
@@ -35,7 +39,10 @@ enum MobileAPIV1 {
         }
 
         var supportsPodcasts: Bool { capabilities?.podcasts == true }
+        var supportsDiscover: Bool { capabilities?.discover == true }
         var supportsLyrics: Bool { capabilities?.lyrics == true }
+        var isLibraryOnly: Bool { libraryOnly == true }
+        var supportsPlaylistEditing: Bool { capabilities?.playlistEditing == true }
 
         var isCompatible: Bool {
             product == "Downtify" && apiVersion <= MobileAPIV1.maximumAPIVersion
@@ -43,6 +50,7 @@ enum MobileAPIV1 {
 
         enum CodingKeys: String, CodingKey {
             case product, name, capabilities
+            case libraryOnly = "library_only"
             case apiVersion = "api_version"
             case serverID = "server_id"
         }

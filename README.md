@@ -1,6 +1,6 @@
 # Downtify iOS
 
-Downtify is a SwiftUI iPhone and iPad app targeting iOS 17 and later. It includes server connection and library flows, local library sync, and a playback experience with a persistent queue, queue editing, shuffle/repeat, and background and lock-screen controls. Automated tests use synthetic fixtures; the checklist below calls out manual simulator work that still needs a reachable server.
+Downtify is a SwiftUI iPhone and iPad app targeting iOS 17 and later. It includes server connection and library flows, local library sync, and a playback experience with a persistent mixed library/catalog queue, queue editing, shuffle/repeat, and background and lock-screen controls. Search covers the synced library and server catalog; Discover includes Finder, personalized suggestions, charts and similar tracks. Catalog results can be played and submitted to the server download queue. Device offline files and server-side download jobs are shown separately. Automated tests use synthetic fixtures; live server behavior still requires a reachable compatible server.
 
 ## Screenshots
 
@@ -32,8 +32,11 @@ Run the test suite above for deterministic playback, persistence, network-contra
 - Open Play Queue; verify the current item and upcoming items, select an upcoming item, remove an item (including one duplicate track occurrence), and reorder upcoming entries.
 - Confirm queue edits and the selected occurrence survive relaunch, and confirm lock-screen controls/metadata while audio plays.
 - Try sign out and reconnect, including the permission and error states relevant to the server.
+- Search both the synced library and server catalog; try a supported URL resolve, Finder browse, Discover collections, charts and Similar.
+- Request a server download from a catalog result and confirm it appears in the server queue. Compare this with a device offline download, which is stored on the phone and available offline.
+- In library-only mode, confirm catalog actions that require external providers are unavailable and local catalog search remains usable.
 
-Manual server-backed playback, persistence across an app relaunch, and lock-screen behavior require a reachable server and device/simulator interaction; automated fixture tests alone do not verify these end-to-end steps.
+Manual server-backed playback, catalog discovery, server download queue updates, persistence across an app relaunch, and lock-screen behavior require a reachable server and device/simulator interaction; automated fixture tests alone do not verify these end-to-end steps. See [the parity audit](docs/WEBUI_PARITY_AUDIT.md) and [execution handoff](docs/EXECUTION_HANDOFF.md) for current implementation and verification status.
 
 ## Server instance
 
@@ -55,4 +58,5 @@ This project is licensed under the [GNU General Public License version 3](LICENS
 
 - [Porting plan](docs/PORTING_PLAN.md)
 - [Android parity audit](docs/ANDROID_PARITY_AUDIT.md)
+- [Search, Finder and Discover parity audit](docs/WEBUI_PARITY_AUDIT.md)
 - [Agent handoffs](agents/README.md)

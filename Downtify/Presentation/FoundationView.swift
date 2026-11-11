@@ -36,7 +36,7 @@ struct FoundationView: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: DowntifyStyle.Space.section) {
+                VStack(alignment: .center, spacing: DowntifyStyle.Space.section) {
                     brand
                     welcome
                     setupCard
@@ -68,7 +68,7 @@ struct FoundationView: View {
     }
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: DowntifyStyle.Space.small) {
+        VStack(alignment: .center, spacing: DowntifyStyle.Space.small) {
             Text("Your music,\nyour server.")
                 .font(.largeTitle.weight(.bold))
                 .tracking(-0.6)
@@ -80,11 +80,12 @@ struct FoundationView: View {
                 .foregroundStyle(DowntifyStyle.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .multilineTextAlignment(.center)
     }
 
     private var setupCard: some View {
         DowntifyCard {
-            VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            VStack(alignment: .center, spacing: DowntifyStyle.Space.regular) {
                 Label("Server setup", systemImage: "server.rack")
                     .font(.headline)
 

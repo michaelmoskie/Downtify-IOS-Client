@@ -14,6 +14,8 @@ final class LibrarySyncCoordinator {
     private let didUpdate: @MainActor (DeviceSession) async -> Void
     private let didFail: @MainActor (DeviceSession, String) async -> Void
     private let didChangeCollections: @MainActor (DeviceSession) async -> Void
+    private let didChangeMusicPolicy: @MainActor (DeviceSession) async -> Void
+    private let didChangeDownloadQueue: @MainActor (DeviceSession) async -> Void
     private var isForeground = false
     private var foregroundTask: Task<Void, Never>?
 
@@ -24,6 +26,8 @@ final class LibrarySyncCoordinator {
         didUpdate: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
         didFail: @escaping @MainActor (DeviceSession, String) async -> Void = { _, _ in },
         didChangeCollections: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
+        didChangeMusicPolicy: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
+        didChangeDownloadQueue: @escaping @MainActor (DeviceSession) async -> Void = { _ in },
         wait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.repository = repository
@@ -34,6 +38,8 @@ final class LibrarySyncCoordinator {
         self.didFail = didFail
         self.wait = wait
         self.didChangeCollections = didChangeCollections
+        self.didChangeMusicPolicy = didChangeMusicPolicy
+        self.didChangeDownloadQueue = didChangeDownloadQueue
     }
 
     func setActive(_ active: Bool) {
@@ -86,8 +92,18 @@ final class LibrarySyncCoordinator {
                         failures = 0
                     }
                     // A successful reconnect closes the gap in events while the app was offline.
-                    if event != .collectionsChanged { await sync(session) }
-                    await didChangeCollections(session)
+                    if event != .collectionsChanged && event != .musicPolicyChanged && event != .downloadQueueChanged {
+                        await sync(session)
+                    }
+                    if event == .connected || event == .musicPolicyChanged {
+                        await didChangeMusicPolicy(session)
+                    }
+                    if event == .connected || event == .collectionsChanged {
+                        await didChangeCollections(session)
+                    }
+                    if event == .connected || event == .downloadQueueChanged {
+                        await didChangeDownloadQueue(session)
+                    }
                 }
             } catch is CancellationError {
                 return

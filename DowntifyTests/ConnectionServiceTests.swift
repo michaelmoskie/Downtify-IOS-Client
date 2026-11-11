@@ -3,6 +3,20 @@ import XCTest
 @testable import Downtify
 
 final class ConnectionServiceTests: XCTestCase {
+    func testServerInfoDecodesLibraryOnlyAndDiscoverPolicy() throws {
+        let enabled = try JSONDecoder().decode(MobileAPIV1.ServerInfoDTO.self, from: Data(
+            #"{"product":"Downtify","server_id":"server-id","api_version":1,"library_only":true,"capabilities":{"discover":true}}"#.utf8
+        ))
+        XCTAssertTrue(enabled.isLibraryOnly)
+        XCTAssertTrue(enabled.supportsDiscover)
+
+        let legacy = try JSONDecoder().decode(MobileAPIV1.ServerInfoDTO.self, from: Data(
+            #"{"product":"Downtify","server_id":"server-id","api_version":1}"#.utf8
+        ))
+        XCTAssertFalse(legacy.isLibraryOnly)
+        XCTAssertFalse(legacy.supportsDiscover)
+    }
+
     @MainActor
     func testArtworkChecksServerIdentityBeforeSendingBearerToken() async throws {
         let store = MemorySessionStore()
