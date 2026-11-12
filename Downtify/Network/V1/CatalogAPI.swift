@@ -13,6 +13,7 @@ protocol CatalogServing {
     func searchArtists(query: String, session: DeviceSession) async throws -> [CatalogArtist]
     func search(query: String, albumLimit: Int, session: DeviceSession) async throws -> CatalogSearchResults
     func resolve(url: String, session: DeviceSession) async throws -> URLResolution
+    func albumTracks(url: String, session: DeviceSession) async throws -> [CatalogSong]
     func preview(artist: String, title: String, duration: Double?, session: DeviceSession) async throws -> URL?
     func finderSearch(query: String, limit: Int, session: DeviceSession) async throws -> CatalogSearchResults
     func finderArtist(id: String, language: String, session: DeviceSession) async throws -> CatalogFinderArtist
@@ -28,6 +29,12 @@ protocol CatalogServing {
     func blockedArtists(session: DeviceSession) async throws -> [CatalogBlockedArtist]
     func blockArtist(name: String, session: DeviceSession) async throws -> CatalogBlockedArtist
     func unblockArtist(name: String, session: DeviceSession) async throws
+}
+
+extension CatalogServing {
+    func albumTracks(url: String, session: DeviceSession) async throws -> [CatalogSong] {
+        try await resolve(url: url, session: session).tracks
+    }
 }
 
 struct CatalogAPI: CatalogServing {
@@ -85,6 +92,19 @@ struct CatalogAPI: CatalogServing {
         return try await get(URLResolution.self, path: "/api/url/resolve", query: [
             URLQueryItem(name: "url", value: url)
         ], session: session, requiresExternalCatalog: true)
+    }
+
+    func albumTracks(url: String, session: DeviceSession) async throws -> [CatalogSong] {
+        guard !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CatalogAPIError.invalidInput }
+        let data = try await request(path: "/api/song/url", query: [URLQueryItem(name: "url", value: url)],
+                                     session: session, requiresExternalCatalog: true, timeoutInterval: 25)
+        let decoder = JSONDecoder()
+        if let tracks = try? decoder.decode([CatalogSong].self, from: data) { return tracks }
+        if let album = try? decoder.decode(CatalogFinderAlbum.self, from: data) { return album.tracks }
+        if let resolution = try? decoder.decode(URLResolution.self, from: data) { return resolution.tracks }
+        if let results = try? decoder.decode(CatalogSearchResults.self, from: data) { return results.tracks }
+        if let song = try? decoder.decode(CatalogSong.self, from: data) { return [song] }
+        throw APIError.decodingFailure
     }
 
     func preview(artist: String, title: String, duration: Double? = nil, session: DeviceSession) async throws -> URL? {
@@ -223,7 +243,8 @@ struct CatalogAPI: CatalogServing {
 
     private func request(
         path: String, method: String = "GET", query: [URLQueryItem] = [], body: Data? = nil,
-        session: DeviceSession, requiresExternalCatalog: Bool = false, requiresDiscoverCapability: Bool = false
+        session: DeviceSession, requiresExternalCatalog: Bool = false, requiresDiscoverCapability: Bool = false,
+        timeoutInterval: TimeInterval = 60
     ) async throws -> Data {
         try Task.checkCancellation()
         let address = try ServerAddress(session.baseAddress)
@@ -239,7 +260,7 @@ struct CatalogAPI: CatalogServing {
         }
         components.queryItems = query.isEmpty ? nil : query
         guard let url = components.url else { throw APIError.invalidAddress }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeoutInterval)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")

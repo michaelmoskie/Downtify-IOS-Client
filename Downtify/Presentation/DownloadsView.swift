@@ -325,6 +325,7 @@ struct DownloadsView: View {
     private func localStatus(_ item: OfflineDownload) -> LocalizedStringKey {
         switch item.state {
         case .preparing: return "Preparing download"
+        case .paused: return "Paused for playback or library work"
         case .transferring:
             if let expected = item.expectedBytes, expected > 0 {
                 return "Downloading · \(ByteCountFormatter.string(fromByteCount: item.receivedBytes, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: expected, countStyle: .file))"

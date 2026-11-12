@@ -33,6 +33,7 @@ final class CatalogPresentationModel: ObservableObject {
     @Published private(set) var searchArtistsState: CatalogLoadState<[CatalogArtist]> = .idle
 
     @Published private(set) var urlResolutionState: CatalogLoadState<URLResolution> = .idle
+    @Published private(set) var albumTracksState: CatalogLoadState<[CatalogSong]> = .idle
     @Published private(set) var finderSearchState: CatalogLoadState<CatalogSearchResults> = .idle
     @Published private(set) var finderArtistState: CatalogLoadState<CatalogFinderArtist> = .idle
     @Published private(set) var finderArtistSongsState: CatalogLoadState<[CatalogSong]> = .idle
@@ -154,6 +155,21 @@ final class CatalogPresentationModel: ObservableObject {
                      isEmpty: { $0.tracks.isEmpty && $0.albums.isEmpty }) { self.urlResolutionState = $0 }
     }
 
+    func loadAlbumTracks(url: String) {
+        guard let session else {
+            albumTracksState = .unavailable(message: "Connect to a server to browse this album.")
+            return
+        }
+        guard externalCatalogAvailable else {
+            albumTracksState = .unavailable(message: "Provider album details are unavailable in library-only mode.")
+            return
+        }
+        let api = self.api
+        startRequest("album_tracks", session: session,
+                     operation: { try await api.albumTracks(url: url, session: session) },
+                     isEmpty: \.isEmpty) { self.albumTracksState = $0 }
+    }
+
     func searchFinder(_ query: String, limit: Int = 25) {
         guard let session else {
             finderSearchState = .unavailable(message: "Connect to a server to search Finder.")
@@ -173,6 +189,7 @@ final class CatalogPresentationModel: ObservableObject {
         finderArtistSongsState = .idle
         finderArtistAlbumsState = .idle
         finderAlbumState = .idle
+        albumTracksState = .idle
     }
 
     func loadFinderArtist(id: String, name: String? = nil, language: String = "en") {
@@ -220,6 +237,7 @@ final class CatalogPresentationModel: ObservableObject {
         finderArtistState = .idle
         finderArtistSongsState = .idle
         finderArtistAlbumsState = .idle
+        albumTracksState = .idle
         let api = self.api
         startRequest("finder_album", session: session, operation: { try await api.finderAlbum(id: id, session: session) },
                      isEmpty: { $0.tracks.isEmpty }) { self.finderAlbumState = $0 }
@@ -428,6 +446,7 @@ final class CatalogPresentationModel: ObservableObject {
         finderArtistSongsState = .idle
         finderArtistAlbumsState = .idle
         finderAlbumState = .idle
+        albumTracksState = .idle
         chartsState = .idle
         similarState = .idle
         discoverArtistsState = .idle

@@ -599,6 +599,13 @@ final class PlaybackController: ObservableObject {
 
     private func resolveMusic(_ item: PlaybackItem, quality: PlaybackQuality,
                               session: DeviceSession) async throws -> PlaybackStream {
+        try await NetworkOperationContext.$priority.withValue(.userFacing) {
+            try await resolveMusicWithPriority(item, quality: quality, session: session)
+        }
+    }
+
+    private func resolveMusicWithPriority(_ item: PlaybackItem, quality: PlaybackQuality,
+                                          session: DeviceSession) async throws -> PlaybackStream {
         if item.catalogSong != nil, libraryOnlyPolicy { throw CatalogAPIError.libraryOnly }
         let offline = network == .unavailable
         if let stream = await resolver.localStream(for: item, quality: quality, session: session,
@@ -674,6 +681,9 @@ final class PlaybackController: ObservableObject {
     }
 
     private func fail(_ failure: PlaybackFailure) {
+        Task {
+            await NetworkOperationCoordinator.shared.recordFailure("Playback failed · \(String(describing: failure))")
+        }
         resumeAfterNetworkFailure = failure == .network && wantsPlayback
         wantsPlayback = false
         checkpointPodcast()
@@ -947,8 +957,10 @@ final class PlaybackController: ObservableObject {
                 if await preloadCache.contains(key) { continue }
                 do {
                     try Task.checkCancellation()
-                    let stream = try await resolver.preloadSource(for: item, quality: plan.quality, session: session)
-                    try await preloadCache.store(stream, for: key)
+                    try await NetworkOperationContext.$priority.withValue(.background) {
+                        let stream = try await resolver.preloadSource(for: item, quality: plan.quality, session: session)
+                        try await preloadCache.store(stream, for: key)
+                    }
                 } catch is CancellationError {
                     return
                 } catch {

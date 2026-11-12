@@ -191,13 +191,13 @@ struct CatalogSearchView: View {
                 if finderAlbumID(album) != nil {
                     switch catalog.finderAlbumState {
                     case .loaded(let details), .partial(let details, _):
-                        songResults(details.tracks)
+                        songResults(details.tracks, queueAlbum: true)
                     case .loading, .idle: ProgressView("Loading album…")
                     case .failed(let message), .unavailable(let message): Text(message).foregroundStyle(.secondary)
                     case .empty: Text("No songs found.").foregroundStyle(.secondary)
                     }
-                } else if album.url != nil {
-                    resolutionDetails
+                } else if let url = album.url {
+                    albumResolutionDetails(url: url)
                 } else {
                     Text("Album details are unavailable.").foregroundStyle(.secondary)
                 }
@@ -211,7 +211,7 @@ struct CatalogSearchView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if let id = finderAlbumID(album) { catalog.loadFinderAlbum(id: id) }
-            else if let url = album.url { catalog.resolveURL(url) }
+            else if let url = album.url { catalog.loadAlbumTracks(url: url) }
         })
     }
 
@@ -280,6 +280,21 @@ struct CatalogSearchView: View {
         }
     }
 
+    @ViewBuilder private func albumResolutionDetails(url: String) -> some View {
+        switch catalog.albumTracksState {
+        case .loaded(let tracks), .partial(let tracks, _):
+            if tracks.isEmpty { Text("No songs found.").foregroundStyle(.secondary) }
+            else { songResults(tracks, queueAlbum: true) }
+        case .loading, .idle: ProgressView("Loading album tracks…")
+        case .failed(let message), .unavailable(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message).foregroundStyle(.secondary)
+                Button("Retry") { catalog.loadAlbumTracks(url: url) }
+            }
+        case .empty: Text("No songs found.").foregroundStyle(.secondary)
+        }
+    }
+
     private func finderAlbumID(_ album: CatalogAlbum) -> String? {
         let id = album.deezerAlbumID ?? (album.source.lowercased() == "deezer" ? album.albumID : nil)
         return id.flatMap { isDecimalID($0) ? $0 : nil }
@@ -294,12 +309,17 @@ struct CatalogSearchView: View {
         !id.isEmpty && id.utf8.allSatisfy { (48...57).contains($0) }
     }
 
-    @ViewBuilder private func songResults(_ songs: [CatalogSong]) -> some View {
+    @ViewBuilder private func songResults(_ songs: [CatalogSong], queueAlbum: Bool = false) -> some View {
         if !songs.isEmpty {
             sectionHeader("Catalog songs")
             ForEach(songs) { song in
                 HStack(spacing: 10) {
                     Button {
+                        if queueAlbum {
+                            let items = songs.map { PlaybackItem.resolving($0, in: library.tracks) }
+                            playback.replaceQueue(items, startingAt: songs.firstIndex(of: song) ?? 0)
+                            return
+                        }
                         if song.source == "library" {
                             guard let track = song.libraryTrack(in: library.tracks) else { return }
                             playback.replaceQueue([.library(track)])

@@ -133,7 +133,9 @@ final class LibrarySyncCoordinator {
     private func sync(_ session: DeviceSession) async {
         status = .syncing
         do {
-            _ = try await repository.sync(for: session)
+            _ = try await NetworkOperationContext.$priority.withValue(.background) {
+                try await repository.sync(for: session)
+            }
             guard (try? await repository.requireCurrent(session)) != nil else { return }
             await didUpdate(session)
             updateGeneration += 1
