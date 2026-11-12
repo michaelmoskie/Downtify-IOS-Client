@@ -5,6 +5,85 @@ import XCTest
 @testable import Downtify
 
 final class PlaybackTests: XCTestCase {
+    func testNetworkCoordinatorPrioritizesForegroundWork() async throws {
+        let coordinator = NetworkOperationCoordinator(limit: 1)
+        let gate = NetworkTestGate()
+        let firstStarted = expectation(description: "first operation started")
+        let foregroundStarted = expectation(description: "foreground operation started")
+        let backgroundStarted = expectation(description: "background operation started")
+        let startOrder = NetworkStartOrder()
+        let first = Task {
+            try await coordinator.withOperation(priority: .background) {
+                firstStarted.fulfill()
+                await gate.wait()
+            }
+        }
+        await fulfillment(of: [firstStarted], timeout: 2)
+        let background = Task {
+            try await coordinator.withOperation(priority: .background) {
+                await startOrder.add("background")
+                backgroundStarted.fulfill()
+            }
+        }
+        let foreground = Task {
+            try await coordinator.withOperation(priority: .userFacing) {
+                await startOrder.add("foreground")
+                foregroundStarted.fulfill()
+            }
+        }
+
+        while await coordinator.queuedOperationCount < 2 { await Task.yield() }
+        await gate.release()
+        await fulfillment(of: [foregroundStarted, backgroundStarted], timeout: 2)
+        try await first.value
+        try await foreground.value
+        try await background.value
+        let order = await startOrder.values
+        XCTAssertEqual(order, ["foreground", "background"])
+    }
+
+    func testNetworkCoordinatorRemovesCancelledQueuedOperation() async throws {
+        let coordinator = NetworkOperationCoordinator(limit: 1)
+        let gate = NetworkTestGate()
+        let started = expectation(description: "operation started")
+        let first = Task {
+            try await coordinator.withOperation(priority: .background) {
+                started.fulfill()
+                await gate.wait()
+            }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let cancelled = Task {
+            try await coordinator.withOperation(priority: .background) { XCTFail("Cancelled operation ran") }
+        }
+        while await coordinator.queuedOperationCount == 0 { await Task.yield() }
+        cancelled.cancel()
+        while await coordinator.queuedOperationCount != 0 { await Task.yield() }
+        await gate.release()
+        try await first.value
+        do {
+            try await cancelled.value
+            XCTFail("Expected queued operation cancellation")
+        } catch is CancellationError { }
+    }
+
+    func testForegroundWaitRequestsBackgroundTransferPreemption() async throws {
+        let coordinator = NetworkOperationCoordinator(limit: 2)
+        let preemptions = NetworkPreemptionProbe()
+        let first = try await coordinator.acquire(priority: .background) {
+            Task { await preemptions.record() }
+        }
+        let second = try await coordinator.acquire(priority: .background) {
+            Task { await preemptions.record() }
+        }
+        let foreground = Task { try await coordinator.acquire(priority: .userFacing) }
+        while await preemptions.count < 2 { await Task.yield() }
+        await coordinator.release(first)
+        let foregroundLease = try await foreground.value
+        await coordinator.release(foregroundLease)
+        await coordinator.release(second)
+    }
+
     func testQueueKeepsDuplicateTracksDistinctAndRestoresTheSelectedOccurrence() throws {
         let first = track("first")
         let second = track("second")
@@ -925,6 +1004,32 @@ final class PlaybackTests: XCTestCase {
         wave.append(samples)
         return wave
     }
+}
+
+private actor NetworkTestGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor NetworkStartOrder {
+    private(set) var values: [String] = []
+    func add(_ value: String) { values.append(value) }
+}
+
+private actor NetworkPreemptionProbe {
+    private(set) var count = 0
+    func record() { count += 1 }
 }
 
 private actor ReadRanges {

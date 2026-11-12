@@ -103,9 +103,14 @@ struct APIClient {
         }
         do {
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            let route = diagnosticRoute(request)
+            guard let http = response as? HTTPURLResponse else {
+                await NetworkOperationCoordinator.shared.recordFailure("Invalid HTTP response · \(route)")
+                throw APIError.invalidResponse
+            }
             guard allowsHTTPErrorResponses || (200..<300).contains(http.statusCode) else {
                 let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                await NetworkOperationCoordinator.shared.recordFailure("HTTP \(http.statusCode) · \(route)")
                 throw APIError.httpStatus(http.statusCode, retryAfter: retryAfter)
             }
             return (data, http)
@@ -115,7 +120,21 @@ struct APIClient {
             try Task.checkCancellation()
             if error is CancellationError { throw CancellationError() }
             // Never include the request URL, headers, or underlying error in diagnostics.
+            let route = diagnosticRoute(request)
+            await NetworkOperationCoordinator.shared.recordFailure("Network transport failed · \(route)")
             throw APIError.transportFailure
         }
     }
+}
+
+private func diagnosticRoute(_ request: URLRequest) -> String {
+    let components = (request.url?.path ?? "").split(separator: "/")
+    let path: String
+    if components.count >= 4, components[0] == "api", components[1] == "v1", components[2] == "tracks" {
+        let suffix = components.dropFirst(4).joined(separator: "/")
+        path = "/api/v1/tracks/:id" + (suffix.isEmpty ? "" : "/\(suffix)")
+    } else {
+        path = request.url?.path ?? "unknown route"
+    }
+    return "\(request.httpMethod ?? "GET") \(path)"
 }

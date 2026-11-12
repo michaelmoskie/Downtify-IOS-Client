@@ -92,6 +92,12 @@ struct PlaybackQueue {
         return entries.firstIndex { $0.id == currentID }
     }
 
+    var upcomingCount: Int {
+        guard let currentIndex else { return 0 }
+        let remaining = max(0, order.count - currentIndex - 1)
+        return remaining + (repeatMode == .all ? currentIndex : 0)
+    }
+
     mutating func replace(_ tracks: [LibraryTrack], startingAt index: Int) {
         replace(tracks.map(PlaybackItem.library), startingAt: index)
     }

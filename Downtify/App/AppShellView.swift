@@ -193,6 +193,7 @@ private struct MiniPlayerView: View {
 
 private struct NowPlayingView: View {
     @ObservedObject var playback: PlaybackController
+    @AppStorage("debug.networkOverlay.enabled") private var networkOverlayEnabled = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.downtifyPalette) private var palette
@@ -213,6 +214,7 @@ private struct NowPlayingView: View {
 
     var body: some View {
         NavigationStack {
+            ZStack(alignment: .topTrailing) {
             ScrollView {
                 let layout = usesWideLayout
                     ? AnyLayout(HStackLayout(alignment: .center, spacing: DowntifyStyle.Space.large))
@@ -253,6 +255,15 @@ private struct NowPlayingView: View {
                 .padding(DowntifyStyle.Space.regular)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
+            }
+            if networkOverlayEnabled {
+                NetworkDebugOverlay(playback: playback)
+                    .padding(.top, 54)
+                    .padding(.trailing, DowntifyStyle.Space.regular)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Network debug statistics")
+            }
             }
             .background(palette.background.ignoresSafeArea())
             .navigationTitle("Now Playing")

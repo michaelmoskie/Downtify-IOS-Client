@@ -158,7 +158,9 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
             url: url, validator: response.validator ?? UUID().uuidString, length: response.length, mediaType: response.mediaType
         )
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
-            let (data, current) = try await source.fetch(range, validator: response.validator)
+            let (data, current) = try await NetworkOperationContext.$priority.withValue(.userFacing) {
+                try await source.fetch(range, validator: response.validator)
+            }
             guard current.length == response.length, current.mediaType == response.mediaType,
                   current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data
@@ -195,7 +197,9 @@ struct PlaybackStreamResolver: PlaybackStreamResolving {
         let representation = PlaybackCache.Representation(scope: catalogScope, url: url,
             validator: response.validator ?? UUID().uuidString, length: response.length, mediaType: response.mediaType)
         let fetch: @Sendable (ClosedRange<Int64>) async throws -> Data = { range in
-            let (data, current) = try await source.fetch(range, validator: response.validator)
+            let (data, current) = try await NetworkOperationContext.$priority.withValue(.userFacing) {
+                try await source.fetch(range, validator: response.validator)
+            }
             guard current.length == response.length, current.mediaType == response.mediaType,
                   current.validator == response.validator, current.servedOriginal == response.servedOriginal else { throw PlaybackFailure.invalidStream }
             return data

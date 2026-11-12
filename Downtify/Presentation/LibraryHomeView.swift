@@ -18,6 +18,7 @@ struct LibraryHomeView: View {
     @AppStorage("library.descending") private var descending = true
     @AppStorage("library.grid") private var grid = true
     @AppStorage("downtify.language") private var language = "system"
+    @AppStorage("debug.networkOverlay.enabled") private var networkOverlayEnabled = false
     @State private var category = Category.albums
     @State private var searchText = ""
     @State private var showingSignOutConfirmation = false
@@ -28,7 +29,7 @@ struct LibraryHomeView: View {
     @State private var showingCreatePlaylist = false
     @State private var newPlaylistName = ""
 
-    private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash, about }
+    private enum Tab { case home, library, search, discover, downloads, podcasts, adminTrash, more }
     private enum Category: String, CaseIterable, Identifiable {
         case songs = "Songs", albums = "Albums", artists = "Artists", playlists = "Playlists"
         var id: Self { self }
@@ -80,9 +81,21 @@ struct LibraryHomeView: View {
             }
 
             NavigationStack {
-                AboutView(version: versionText, showsDoneButton: false)
+                Form {
+                    Section("Diagnostics") {
+                        Toggle("Network debug overlay", isOn: $networkOverlayEnabled)
+                        Text("Shows active and waiting network work, playback queue depth, and offline transfer state.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Section("About") {
+                        NavigationLink("About Downtify") { AboutView(version: versionText) }
+                        LabeledContent("Version", value: versionText)
+                    }
+                }
+                .navigationTitle("More")
             }
-            .tabItem { Label("About", systemImage: "info.circle") }.tag(Tab.about)
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .tabItem { Label("More", systemImage: "ellipsis") }.tag(Tab.more)
         }
         .confirmationDialog("Sign out of \(server.name)?", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -96,6 +109,15 @@ struct LibraryHomeView: View {
         .alert("Sign out failed", isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
             Button("OK", role: .cancel) { signOutError = nil }
         } message: { if let signOutError { Text(signOutError) } }
+        .overlay(alignment: .topTrailing) {
+            if networkOverlayEnabled && tab != .more {
+                NetworkDebugOverlay(playback: playback)
+                    .padding(.top, 54)
+                    .padding(.trailing, 8)
+                    .allowsHitTesting(false)
+                    .zIndex(100)
+            }
+        }
         .sheet(item: $trashTrack) { track in
             NavigationStack {
                 MoveToTrashConfirmationView(track: track, connection: connection) {
@@ -454,6 +476,61 @@ struct LibraryHomeView: View {
         async let music: Void = library.refresh()
         async let lists: Void = collections.refresh()
         _ = await (music, lists)
+    }
+}
+
+struct NetworkDebugOverlay: View {
+    @ObservedObject var playback: PlaybackController
+    @EnvironmentObject private var downloads: OfflineDownloads
+    @State private var network = NetworkOperationSnapshot(active: 0, maximum: 2, queued: 0,
+                                                          foregroundActive: 0, backgroundActive: 0,
+                                                          foregroundQueued: 0, backgroundQueued: 0,
+                                                          recentFailures: [])
+
+    var body: some View {
+        let activeTransfers = downloads.currentDownloads.filter { $0.state == .transferring }.count
+        let pausedTransfers = downloads.currentDownloads.filter { $0.state == .paused }.count
+        VStack(alignment: .leading, spacing: 3) {
+            Text("NET  \(network.active)/\(network.maximum)  ·  wait \(network.queued)")
+            Text("FG \(network.foregroundActive) (+\(network.foregroundQueued))  BG \(network.backgroundActive) (+\(network.backgroundQueued))")
+            Text("AHEAD \(playback.queue.upcomingCount)  ·  DL \(activeTransfers) active / \(pausedTransfers) paused")
+            Text("PLAY  \(playbackStatus)")
+            if !network.recentFailures.isEmpty {
+                Divider().overlay(.secondary.opacity(0.25))
+                Text("RECENT FAILURES · SAVED")
+                    .foregroundStyle(.red)
+                ForEach(Array(network.recentFailures.suffix(3).reversed()), id: \.self) { failure in
+                    Text(failure)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25), lineWidth: 0.5))
+        .task {
+            while !Task.isCancelled {
+                network = await NetworkOperationCoordinator.shared.snapshot()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+    }
+
+    private var playbackStatus: String {
+        switch playback.phase {
+        case .idle: "idle"
+        case .loading: "loading"
+        case .paused: "paused"
+        case .playing: "playing"
+        case .buffering: "buffering"
+        case .ended: "ended"
+        case .failed(let error): "failed: \(String(describing: error))"
+        }
     }
 }
 

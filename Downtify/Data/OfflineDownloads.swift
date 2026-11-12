@@ -17,7 +17,7 @@ enum OfflineDownloadFailure: String, Error, Codable, Equatable {
 
 struct OfflineDownload: Codable, Equatable, Identifiable {
     enum State: Codable, Equatable {
-        case preparing, transferring, ready, cancelled, failed(OfflineDownloadFailure)
+        case preparing, transferring, paused, ready, cancelled, failed(OfflineDownloadFailure)
     }
 
     struct Scope: Codable, Equatable {
@@ -39,10 +39,12 @@ struct OfflineDownload: Codable, Equatable, Identifiable {
     var state: State = .preparing
     var media: OfflineMedia?
     var receivedBytes: Int64 = 0
+    var resumeData: Data? = nil
+    var usesBackgroundSession = false
 
     var expectedBytes: Int64? { media?.length }
 
-    var pending: Bool { state == .preparing || state == .transferring }
+    var pending: Bool { state == .preparing || state == .transferring || state == .paused }
 }
 
 @MainActor
@@ -65,6 +67,7 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     private var loaded = false
     @Published private var session: DeviceSession?
     private var jobs: [UUID: URLSessionDownloadTask] = [:]
+    private var transferLeases: [UUID: UUID] = [:]
     private var preparations: [UUID: Task<Void, Never>] = [:]
     private var observation: Task<Void, Never>?
     private var lastProgressSave = Date.distantPast
@@ -249,7 +252,7 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
                 try Task.checkCancellation()
                 guard let self else { return }
                 guard self.session == session else { throw OfflineDownloadFailure.interrupted }
-                try begin(id, source: source)
+                try await begin(id, source: source)
             } catch is CancellationError {
                 return
             } catch {
@@ -261,8 +264,8 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
         return id
     }
 
-    private func begin(_ id: UUID, source: OfflineDownloadSource) throws {
-        guard let index = currentIndex(id), records[index].state == .preparing else { return }
+    private func begin(_ id: UUID, source: OfflineDownloadSource) async throws {
+        guard let index = currentIndex(id), records[index].state == .preparing || records[index].state == .paused else { return }
         let length = source.media.length
         let reserved = records.reduce(Int64(0)) {
             $0 + ($1.state == .transferring ? ($1.expectedBytes ?? 0) : 0)
@@ -273,16 +276,30 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
             throw OfflineDownloadFailure.insufficientStorage
         }
 
-        let task = (source.background ? background : foreground).downloadTask(with: source.request)
-        task.taskDescription = id.uuidString
+        let lease = try await NetworkOperationCoordinator.shared.acquire(priority: .background) { [weak self] in
+            Task { @MainActor in self?.pauseForForeground(id) }
+        }
+        guard let index = currentIndex(id), records[index].state == .preparing || records[index].state == .paused else {
+            await NetworkOperationCoordinator.shared.release(lease)
+            return
+        }
+        let resumeData = records[index].resumeData
+        let transferSession = source.background ? background : foreground
+        let transfer = resumeData.map { transferSession.downloadTask(withResumeData: $0) }
+            ?? transferSession.downloadTask(with: source.request)
+        transfer.taskDescription = id.uuidString
         records[index].media = source.media
         records[index].state = .transferring
+        records[index].resumeData = nil
+        records[index].usesBackgroundSession = source.background
         do { try writeManifest() } catch {
-            task.cancel()
+            transfer.cancel()
+            await NetworkOperationCoordinator.shared.release(lease)
             throw error
         }
-        jobs[id] = task
-        task.resume()
+        jobs[id] = transfer
+        transferLeases[id] = lease
+        transfer.resume()
     }
 
     func reattach(_ tasks: [URLSessionTask], previouslyPending: Set<UUID>) {
@@ -304,6 +321,10 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
         }
         for index in records.indices {
             let record = records[index]
+            if record.state == .paused, record.resumeData != nil, preparations[record.id] == nil {
+                resumePaused(record.id)
+                continue
+            }
             guard previouslyPending.contains(record.id), record.pending, jobs[record.id] == nil,
                   preparations[record.id] == nil else { continue }
             // Recover an already verified file if the process stopped after the move, before writing the manifest.
@@ -385,6 +406,10 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     func completed(_ task: URLSessionTask, error: Error?) {
         guard let id = taskID(task) else { return }
         jobs[id] = nil
+        if let lease = transferLeases.removeValue(forKey: id) {
+            Task { await NetworkOperationCoordinator.shared.release(lease) }
+        }
+        if records.first(where: { $0.id == id })?.state == .paused { return }
         guard records.contains(where: {
             $0.id == id && ($0.state == .transferring || $0.state == .failed(.interrupted))
         }) else { return }
@@ -400,6 +425,57 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     private func stop(_ id: UUID) {
         preparations.removeValue(forKey: id)?.cancel()
         jobs.removeValue(forKey: id)?.cancel()
+        if let lease = transferLeases.removeValue(forKey: id) {
+            Task { await NetworkOperationCoordinator.shared.release(lease) }
+        }
+    }
+
+    private func pauseForForeground(_ id: UUID) {
+        guard let task = jobs[id], let index = currentIndex(id), records[index].state == .transferring else { return }
+        task.cancel(byProducingResumeData: { [weak self] data in
+            Task { @MainActor in
+                guard let self, let index = self.currentIndex(id) else { return }
+                self.jobs[id] = nil
+                if let data {
+                    self.records[index].state = .paused
+                    self.records[index].resumeData = data
+                } else {
+                    self.records[index].state = .failed(.interrupted)
+                }
+                self.save()
+                if let lease = self.transferLeases.removeValue(forKey: id) {
+                    await NetworkOperationCoordinator.shared.release(lease)
+                }
+                if data != nil { self.resumePaused(id) }
+            }
+        })
+    }
+
+    private func resumePaused(_ id: UUID) {
+        guard let index = currentIndex(id), records[index].state == .paused,
+              let data = records[index].resumeData else { return }
+        let usesBackgroundSession = records[index].usesBackgroundSession
+        let session = usesBackgroundSession ? background : foreground
+        let leaseTask = Task { [weak self] in
+            defer { self?.preparations[id] = nil }
+            do {
+                let lease = try await NetworkOperationCoordinator.shared.acquire(priority: .background) { [weak self] in
+                    Task { @MainActor in self?.pauseForForeground(id) }
+                }
+                guard let self, let index = self.currentIndex(id), self.records[index].state == .paused else {
+                    await NetworkOperationCoordinator.shared.release(lease)
+                    return
+                }
+                self.transferLeases[id] = lease
+                self.jobs[id] = session.downloadTask(withResumeData: data)
+                self.jobs[id]?.taskDescription = id.uuidString
+                self.jobs[id]?.resume()
+                self.records[index].state = .transferring
+                self.records[index].resumeData = nil
+                self.save()
+            } catch { }
+        }
+        preparations[id] = leaseTask
     }
 
     private func markFailed(_ id: UUID, _ failure: OfflineDownloadFailure) {

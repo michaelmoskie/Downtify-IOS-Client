@@ -64,6 +64,7 @@ final class LibraryPresentationModel: ObservableObject {
     private var observation: Task<Void, Never>?
     private var session: DeviceSession?
     private var generation = 0
+    private var manualRefreshTask: Task<Void, Never>?
 
     init(repository: LibraryRepository, sessionUpdates: @escaping @Sendable () async throws -> AsyncStream<DeviceSession?>) {
         self.repository = repository
@@ -88,11 +89,24 @@ final class LibraryPresentationModel: ObservableObject {
     }
 
     func refresh() async {
+        if let manualRefreshTask {
+            await manualRefreshTask.value
+            return
+        }
+        let task = Task { await performManualRefresh() }
+        manualRefreshTask = task
+        await task.value
+        manualRefreshTask = nil
+    }
+
+    private func performManualRefresh() async {
         guard let session else { return }
         let request = generation
         state = tracks.isEmpty ? .loading : .refreshing
         do {
-            _ = try await repository.sync(for: session, refresh: true)
+            _ = try await NetworkOperationContext.$priority.withValue(.userFacing) {
+                try await repository.sync(for: session, refresh: true)
+            }
             guard request == generation, self.session == session else { return }
             await loadSnapshot(for: session, generation: request, clearRefreshError: true)
         } catch LibrarySyncError.sessionChanged {

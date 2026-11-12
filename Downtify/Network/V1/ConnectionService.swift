@@ -323,7 +323,142 @@ final class ConnectionHTTPTransport: HTTPDataLoading {
     }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        try await session.data(for: request)
+        try await NetworkOperationCoordinator.shared.withOperation {
+            try await session.data(for: request)
+        }
+    }
+}
+
+enum NetworkOperationPriority: Int, Sendable {
+    case background = 0
+    case userFacing = 1
+}
+
+enum NetworkOperationContext {
+    @TaskLocal static var priority: NetworkOperationPriority = .background
+}
+
+struct NetworkOperationSnapshot: Equatable, Sendable {
+    let active: Int
+    let maximum: Int
+    let queued: Int
+    let foregroundActive: Int
+    let backgroundActive: Int
+    let foregroundQueued: Int
+    let backgroundQueued: Int
+    let recentFailures: [String]
+}
+
+actor NetworkOperationCoordinator {
+    static let shared = NetworkOperationCoordinator(limit: 2)
+    private static let failuresDefaultsKey = "debug.networkOverlay.recentFailures"
+
+    private struct Waiter {
+        let id: UUID
+        let priority: NetworkOperationPriority
+        let order: UInt64
+        let onPreempt: (@Sendable () -> Void)?
+        let continuation: CheckedContinuation<UUID, Error>
+    }
+
+    private struct ActiveOperation {
+        let priority: NetworkOperationPriority
+        let onPreempt: (@Sendable () -> Void)?
+        var preemptionRequested = false
+    }
+
+    private let limit: Int
+    private var active: [UUID: ActiveOperation] = [:]
+    private var order: UInt64 = 0
+    private var waiters: [Waiter] = []
+    private var recentFailures = UserDefaults.standard.stringArray(forKey: failuresDefaultsKey) ?? []
+
+    init(limit: Int = 2) { self.limit = max(1, limit) }
+
+    var queuedOperationCount: Int { waiters.count }
+
+    func snapshot() -> NetworkOperationSnapshot {
+        let foregroundActive = active.values.filter { $0.priority == .userFacing }.count
+        let foregroundQueued = waiters.filter { $0.priority == .userFacing }.count
+        return NetworkOperationSnapshot(active: active.count, maximum: limit, queued: waiters.count,
+                                        foregroundActive: foregroundActive,
+                                        backgroundActive: active.count - foregroundActive,
+                                        foregroundQueued: foregroundQueued,
+                                        backgroundQueued: waiters.count - foregroundQueued,
+                                        recentFailures: recentFailures)
+    }
+
+    func recordFailure(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        recentFailures.append("\(timestamp)  \(message)")
+        if recentFailures.count > 5 { recentFailures.removeFirst(recentFailures.count - 5) }
+        UserDefaults.standard.set(recentFailures, forKey: Self.failuresDefaultsKey)
+    }
+
+    func withOperation<T>(priority: NetworkOperationPriority? = nil,
+                          operation: () async throws -> T) async throws -> T {
+        let lease = try await acquire(priority: priority ?? NetworkOperationContext.priority)
+
+        do {
+            try Task.checkCancellation()
+            let result = try await operation()
+            release(lease)
+            return result
+        } catch {
+            release(lease)
+            throw error
+        }
+    }
+
+    func acquire(priority: NetworkOperationPriority, onPreempt: (@Sendable () -> Void)? = nil) async throws -> UUID {
+        let id = UUID()
+        let lease = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UUID, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else if active.count < limit && waiters.isEmpty {
+                    active[id] = ActiveOperation(priority: priority, onPreempt: onPreempt)
+                    continuation.resume(returning: id)
+                } else {
+                    order &+= 1
+                    waiters.append(Waiter(id: id, priority: priority, order: order,
+                                          onPreempt: onPreempt, continuation: continuation))
+                    if priority == .userFacing { requestBackgroundPreemption() }
+                }
+            }
+        }, onCancel: {
+            Task { await self.cancelWaiter(id) }
+        })
+        if Task.isCancelled { release(lease); throw CancellationError() }
+        return lease
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+
+    func release(_ id: UUID) {
+        guard active.removeValue(forKey: id) != nil else { return }
+        if !waiters.isEmpty {
+            let index = waiters.indices.max {
+                let lhs = waiters[$0], rhs = waiters[$1]
+                return lhs.priority == rhs.priority ? lhs.order > rhs.order : lhs.priority.rawValue < rhs.priority.rawValue
+            }!
+            let waiter = waiters.remove(at: index)
+            active[waiter.id] = ActiveOperation(priority: waiter.priority, onPreempt: waiter.onPreempt)
+            waiter.continuation.resume(returning: waiter.id)
+        }
+    }
+
+    private func requestBackgroundPreemption() {
+        for id in active.keys {
+            guard var operation = active[id], operation.priority == .background,
+                  !operation.preemptionRequested, let onPreempt = operation.onPreempt else { continue }
+            operation.preemptionRequested = true
+            active[id] = operation
+            onPreempt()
+        }
     }
 }
 
