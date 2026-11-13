@@ -31,6 +31,8 @@ struct PendingCollectionAction: Codable, Equatable, Identifiable, Sendable {
     var nextAttempt: Date?
     var status: Status
     var failure: String?
+    // Optional for queues written by earlier app versions.
+    var requiresVerification: Bool?
 
     init(target: Target, desiredValue: Bool) {
         id = UUID()
@@ -40,6 +42,7 @@ struct PendingCollectionAction: Codable, Equatable, Identifiable, Sendable {
         nextAttempt = nil
         status = .queued
         failure = nil
+        requiresVerification = nil
     }
 }
 

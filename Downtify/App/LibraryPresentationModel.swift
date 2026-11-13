@@ -427,6 +427,31 @@ final class LibraryCollectionsModel: ObservableObject {
         while request == generation, appActive, pathAvailable, !Task.isCancelled,
               let session, let index = pendingActions.firstIndex(where: { $0.status == .queued }) {
             var action = pendingActions[index]
+            if action.requiresVerification == true {
+                let verified = await verifySession(session)
+                guard request == generation, !Task.isCancelled else { return }
+                if !verified {
+                    // Verification can fail transiently while the path remains available.
+                    // Recheck without consuming a write attempt.
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    continue
+                }
+                action.requiresVerification = false
+                if action.attempts >= 5 {
+                    action.status = .failed
+                    action.failure = "Server returned HTTP 401."
+                    action.nextAttempt = nil
+                }
+                do {
+                    try await database.updatePendingAction(action, in: scope(session), deviceID: session.deviceID)
+                    guard request == generation, !Task.isCancelled else { return }
+                    replacePendingAction(action)
+                } catch {
+                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    return
+                }
+                continue
+            }
             if let next = action.nextAttempt, next > Date() {
                 do { try await Task.sleep(for: .seconds(next.timeIntervalSinceNow)) }
                 catch { return }
@@ -472,11 +497,13 @@ final class LibraryCollectionsModel: ObservableObject {
             } catch is CancellationError { return }
             catch {
                 guard request == generation, !Task.isCancelled else { return }
-                if case APIError.httpStatus(401, _) = error {
-                    guard await verifySession(session), request == generation, !Task.isCancelled else { return }
-                }
                 action.attempts += 1
-                if let delay = Self.retryDelay(for: error, attempt: action.attempts), action.attempts < 5 {
+                if case APIError.httpStatus(401, _) = error {
+                    // Persist the verification barrier before trying the verifier. Relaunch or
+                    // foregrounding must not resend until the pairing has been confirmed.
+                    action.requiresVerification = true
+                    action.nextAttempt = Date().addingTimeInterval(pow(2.0, Double(min(action.attempts, 4))))
+                } else if let delay = Self.retryDelay(for: error, attempt: action.attempts), action.attempts < 5 {
                     action.nextAttempt = Date().addingTimeInterval(delay)
                 } else {
                     action.status = .failed
@@ -664,6 +691,27 @@ final class LibraryCollectionsModel: ObservableObject {
         if playlistState == .ready { playlistMutationError = wasConflict ? .conflictRequiresReview : nil }
     }
 
+    // A durable tombstone prevents an old pairing's rows being replayed if deleting
+    // them failed during sign-out. It contains no credentials.
+    private func actionDiscardKey(_ session: DeviceSession) -> String {
+        let values = [session.serverID, scope(session).account, session.deviceID]
+        let data = (try? JSONEncoder().encode(values)) ?? Data()
+        return "pending-actions.discard." + data.base64EncodedString()
+    }
+
+    private func discardActions(for session: DeviceSession) async throws {
+        let key = actionDiscardKey(session)
+        UserDefaults.standard.set(true, forKey: key)
+        // Flush the marker before deleting so a crash cannot replay stale rows.
+        guard UserDefaults.standard.synchronize() else { throw LibraryDatabaseError.storageUnavailable }
+        try await database.removePendingActions(in: scope(session), deviceID: session.deviceID)
+        UserDefaults.standard.removeObject(forKey: key)
+        guard UserDefaults.standard.synchronize() else {
+            UserDefaults.standard.set(true, forKey: key)
+            throw LibraryDatabaseError.storageUnavailable
+        }
+    }
+
     private func changeSession(_ newSession: DeviceSession?) async {
         guard session != newSession else { return }
         let previous = session
@@ -674,9 +722,10 @@ final class LibraryCollectionsModel: ObservableObject {
         enqueueTask?.cancel()
         await enqueueTask?.value
         enqueueTask = nil
+        var discardFailed = false
         if let previous {
-            do { try await database.removePendingActions(in: scope(previous), deviceID: previous.deviceID) }
-            catch { actionError = "Could not clear pending actions for the previous session." }
+            do { try await discardActions(for: previous) }
+            catch { discardFailed = true }
         }
         guard request == generation else { return }
         pendingActions = []
@@ -691,12 +740,16 @@ final class LibraryCollectionsModel: ObservableObject {
         playlistState = .loading
         likesState = .loading
         mutationBusy = false
-        actionError = nil
+        actionError = discardFailed ? "Could not clear pending actions for the previous session." : nil
         supportsPlaylistEditing = false
         activePlaylistMutation = nil
         playlistMutationError = nil
         guard let newSession else { return }
         do {
+            if UserDefaults.standard.bool(forKey: actionDiscardKey(newSession)) {
+                try await discardActions(for: newSession)
+            }
+            guard request == generation else { return }
             pendingActions = try await database.pendingActions(in: scope(newSession), deviceID: newSession.deviceID)
         } catch {
             actionError = "Could not load pending actions. Delivery has stopped."

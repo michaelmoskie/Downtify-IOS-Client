@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import Downtify
 
 @MainActor
@@ -474,6 +475,141 @@ final class LibraryPresentationModelTests: XCTestCase {
         continuation.finish()
     }
 
+    func testUnauthorizedActionWaitsForSessionVerification() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.failNextWrite(status: 401)
+        let verifier = PendingSessionVerifier()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates }) { _ in
+            await verifier.verify()
+        }
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntilAsync { await verifier.count() == 1 }
+        let writesBeforeVerification = await feed.recordedWrites()
+        XCTAssertTrue(writesBeforeVerification.isEmpty)
+        XCTAssertEqual(model.pendingActions.first?.status, .queued)
+        await verifier.allow()
+        try await Task.sleep(for: .milliseconds(50))
+        model.setActionsActive(true)
+        let deadline = ContinuousClock.now + .seconds(4)
+        while model.pendingActions.first?.status != .sent && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.pendingActions.first?.status, .sent)
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:true"])
+        continuation.finish()
+    }
+
+    func testPermanentHTTPFailureDoesNotBlockFollowingIntent() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.failNextWrite(status: 403)
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntil { model.pendingActions.count == 2 && model.pendingActions[1].status == .sent }
+        XCTAssertEqual(model.pendingActions.first?.status, .failed)
+        XCTAssertEqual(model.pendingActions.first?.failure, "Server returned HTTP 403.")
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:false"])
+        continuation.finish()
+    }
+
+    func testFailedDiscardBlocksReplayAndRemainsVisible() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession(server: "failed-discard-test")
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(folder.appending(path: "library.sqlite").path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let trigger = "CREATE TRIGGER reject_action_delete BEFORE DELETE ON pending_collection_actions BEGIN SELECT RAISE(FAIL, 'test'); END;"
+        XCTAssertEqual(sqlite3_exec(db, trigger, nil, nil, nil), SQLITE_OK)
+        continuation.yield(nil)
+        await waitUntil { model.likedIDs == nil && model.actionError != nil }
+        let scope = LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID)
+        let keyData = try JSONEncoder().encode([session.serverID, scope.account, session.deviceID])
+        let key = "pending-actions.discard." + keyData.base64EncodedString()
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
+        model.setActionsActive(true)
+        model.setActionsPathAvailable(true)
+        continuation.yield(session)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNotNil(model.actionError)
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        let writes = await feed.recordedWrites()
+        XCTAssertTrue(writes.isEmpty)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
+        XCTAssertEqual(sqlite3_exec(db, "DROP TRIGGER reject_action_delete", nil, nil, nil), SQLITE_OK)
+        continuation.finish()
+    }
+
+    func testDiscardTombstonePreventsStaleActionsAfterRelaunch() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession(server: "discard-tombstone-test")
+        let scope = LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID)
+        let old = PendingCollectionAction(target: .like(trackID: "song"), desiredValue: true)
+        try await database.appendPendingAction(old, in: scope, deviceID: session.deviceID)
+        let keyData = try JSONEncoder().encode([session.serverID, scope.account, session.deviceID])
+        let key = "pending-actions.discard." + keyData.base64EncodedString()
+        UserDefaults.standard.set(true, forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        model.setActionsActive(true)
+        model.setActionsPathAvailable(true)
+        continuation.yield(session)
+        await waitUntil { model.likesState == .ready }
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key))
+        let stored = try await database.pendingActions(in: scope, deviceID: session.deviceID)
+        let writes = await feed.recordedWrites()
+        XCTAssertTrue(stored.isEmpty)
+        XCTAssertTrue(writes.isEmpty)
+        continuation.finish()
+    }
+
+    func testUnavailableActionStoreDoesNotClaimAnIntentWasQueued() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let database = LibraryDatabase(fileURL: folder)
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: PendingActionFeed(), database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.actionError != nil }
+        await model.toggleLike(makeTrack("song"))
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        XCTAssertNotNil(model.actionError)
+        continuation.finish()
+    }
+
     func testInFlightResultDoesNotUpdateReplacementSession() async throws {
         let (database, folder) = try makeDatabase()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -834,6 +970,7 @@ private actor PendingActionFeed: LibraryCollectionsFetching {
     private var favorite = false
     private var writes: [String] = []
     private var loseAcknowledgment = false
+    private var failStatus: Int?
     private var pauseWrite = false
     private var waiting = false
     private var writeContinuation: CheckedContinuation<Void, Never>?
@@ -852,6 +989,10 @@ private actor PendingActionFeed: LibraryCollectionsFetching {
             waiting = false
             try Task.checkCancellation()
         }
+        if let status = failStatus {
+            failStatus = nil
+            throw APIError.httpStatus(status, retryAfter: nil)
+        }
         self.liked = liked
         writes.append("like:\(trackID):\(liked)")
         if loseAcknowledgment {
@@ -865,10 +1006,19 @@ private actor PendingActionFeed: LibraryCollectionsFetching {
     }
     func removePlaylist() { available = false }
     func loseNextAcknowledgment() { loseAcknowledgment = true }
+    func failNextWrite(status: Int) { failStatus = status }
     func pauseNextWrite() { pauseWrite = true }
     func isWaiting() -> Bool { waiting }
     func resumeWrite() { writeContinuation?.resume(); writeContinuation = nil }
     func recordedWrites() -> [String] { writes }
+}
+
+private actor PendingSessionVerifier {
+    private var calls = 0
+    private var permitted = false
+    func verify() -> Bool { calls += 1; return permitted }
+    func allow() { permitted = true }
+    func count() -> Int { calls }
 }
 
 private struct CollectionsFeed: LibraryCollectionsFetching {
