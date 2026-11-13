@@ -35,6 +35,16 @@ struct LibraryHomeView: View {
         var id: Self { self }
     }
 
+    private func actionDescription(_ action: PendingCollectionAction) -> LocalizedStringKey {
+        switch action.target {
+        case .like(let id):
+            let title = library.tracks.first(where: { $0.id == id })?.title ?? id
+            return action.desiredValue ? "Like song: \(title)" : "Unlike song: \(title)"
+        case .favorite(let name, _, _):
+            return action.desiredValue ? "Favorite playlist: \(name)" : "Unfavorite playlist: \(name)"
+        }
+    }
+
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
@@ -82,6 +92,29 @@ struct LibraryHomeView: View {
 
             NavigationStack {
                 Form {
+                    Section("Pending Actions") {
+                        if let error = collections.actionError {
+                            Text(error).foregroundStyle(.red)
+                            Button("Dismiss") { collections.clearError() }
+                        }
+                        if collections.pendingActions.isEmpty {
+                            Text("No actions yet").foregroundStyle(.secondary)
+                        }
+                        ForEach(collections.pendingActions) { action in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(actionDescription(action))
+                                switch action.status {
+                                case .queued: Text("Queued").foregroundStyle(.secondary)
+                                case .sent: Text("Sent").foregroundStyle(.secondary)
+                                case .failed:
+                                    Text(action.failure ?? String(localized: "Action failed")).foregroundStyle(.red)
+                                }
+                                if action.status != .queued {
+                                    Button("Dismiss") { Task { await collections.dismissAction(action.id) } }
+                                }
+                            }
+                        }
+                    }
                     Section("Diagnostics") {
                         Toggle("Network debug overlay", isOn: $networkOverlayEnabled)
                         Text("Shows active and waiting network work, playback queue depth, and offline transfer state.")
@@ -766,12 +799,12 @@ private struct LibraryContextView: View {
                         tracks: LibraryTrackOrdering.sorted(library.tracks),
                         selectedTrackIDs: $selectedTrackIDs,
                         isBusy: collections.mutationBusy
-                    ) {
+                    ) { allowDuplicates in
                         let ids = LibraryTrackOrdering.sorted(library.tracks)
                             .filter { selectedTrackIDs.contains($0.id) }
                             .map(\.id)
                         Task {
-                            await collections.addTracks(ids, to: playlist.name)
+                            await collections.addTracks(ids, to: playlist.name, allowDuplicates: allowDuplicates)
                             if collections.playlistMutationError == nil {
                                 playlistSheet = nil
                             }
@@ -790,6 +823,8 @@ private struct LibraryContextView: View {
                                 trackID: occurrence.trackID, occurrence: rank, from: playlist.name
                             )
                         }
+                    } onRemoveAll: { trackID in
+                        Task { await collections.removeTracks([trackID], from: playlist.name) }
                     }
                 case .reorder:
                     PlaylistReorderSheet(playlist: playlist, catalog: library.catalog,
@@ -834,14 +869,21 @@ private struct LibraryContextView: View {
                 }
                 .accessibilityLabel("Shuffle songs")
             }
-            if let playlist, let favorite = playlist.favorite {
+            if let playlist, playlist.favorite != nil {
+                let favorite = collections.effectiveFavorite(playlist)
                 Button {
                     Task { await collections.toggleFavorite(playlist.name) }
                 } label: {
-                    Image(systemName: favorite ? "star.fill" : "star").downtifyControlTarget()
+                    HStack(spacing: 4) {
+                        Image(systemName: favorite ? "star.fill" : "star").downtifyControlTarget()
+                        if collections.hasPendingFavorite(playlist.name) {
+                            Text("Queued").font(.caption)
+                        }
+                    }
                 }
                 .disabled(collections.mutationBusy)
                 .accessibilityLabel(favorite ? "Remove playlist from favorites" : "Favorite playlist")
+                .accessibilityValue(collections.hasPendingFavorite(playlist.name) ? "Queued" : "")
             }
             if !tracks.isEmpty {
                 Menu {
@@ -960,13 +1002,15 @@ private struct PlaylistTrackSelectionSheet: View {
     let tracks: [LibraryTrack]
     @Binding var selectedTrackIDs: Set<String>
     let isBusy: Bool
-    let onAdd: () -> Void
+    let onAdd: (Bool) -> Void
+    @State private var allowDuplicates = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 PlaylistMutationFeedbackRow()
+                Toggle("Add another copy of existing tracks", isOn: $allowDuplicates)
                 ForEach(tracks) { track in
                     Button {
                         if selectedTrackIDs.contains(track.id) {
@@ -996,7 +1040,7 @@ private struct PlaylistTrackSelectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { onAdd() }
+                    Button("Add") { onAdd(allowDuplicates) }
                         .disabled(selectedTrackIDs.isEmpty || isBusy)
                 }
             }
@@ -1101,6 +1145,8 @@ private struct PlaylistOccurrenceRemovalSheet: View {
     let catalog: LibraryCatalog
     let isBusy: Bool
     let onRemove: (PlaylistTrackOccurrence) -> Void
+    let onRemoveAll: (String) -> Void
+    @State private var removeAllTrackID: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1119,9 +1165,20 @@ private struct PlaylistOccurrenceRemovalSheet: View {
                             onRemove(row.occurrence)
                         }
                         .disabled(isBusy)
-                        .accessibilityLabel("Remove track occurrence")
+                        .accessibilityLabel(Text(row.track?.title ?? row.occurrence.trackID) + Text(", ") + Text("Remove track occurrence"))
                         .accessibilityValue(Text("Occurrence \(Int(row.occurrence.position + 1))"))
+                        Button("Remove All Copies", role: .destructive) { removeAllTrackID = row.occurrence.trackID }
+                            .disabled(isBusy)
+                            .accessibilityLabel("Remove all copies of \(row.track?.title ?? row.occurrence.trackID)")
                     }
+                }
+            }
+            .confirmationDialog("Remove all copies of this track?", isPresented: Binding(
+                get: { removeAllTrackID != nil }, set: { if !$0 { removeAllTrackID = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove All Copies", role: .destructive) {
+                    if let id = removeAllTrackID { onRemoveAll(id) }
+                    removeAllTrackID = nil
                 }
             }
             .navigationTitle("Remove Occurrence")
@@ -1153,6 +1210,8 @@ private struct PlaylistReorderSheet: View {
                         Text(catalog.tracksByID[occurrence.trackID]?.artist ?? occurrence.trackID)
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityValue(Text("Occurrence \(Int((occurrences.firstIndex(of: occurrence) ?? 0) + 1))"))
                 }
                 .onMove { source, destination in occurrences.move(fromOffsets: source, toOffset: destination) }
             }
@@ -1169,7 +1228,13 @@ private struct PlaylistReorderSheet: View {
                     }
                     .disabled(isBusy || PlaylistTrackOccurrence.completeOrder(
                         occurrences, matching: playlist.trackIDs
-                    ) == nil || collections.playlistMutationError == .conflictRequiresReview)
+                    ) == nil || (collections.playlistMutationError == .conflictRequiresReview ||
+                          collections.playlistMutationError == .conflictRefreshFailed))
+                }
+            }
+            .onChange(of: collections.playlistMutationError) { _, error in
+                if error == .conflictRequiresReview {
+                    occurrences = PlaylistTrackOccurrence.ordered(playlist.trackIDs)
                 }
             }
             .onChange(of: playlist.trackIDs, initial: true) { _, trackIDs in
@@ -1202,7 +1267,10 @@ private struct PlaylistMutationFeedbackRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if error == .conflictRequiresReview {
+                if error == .conflictRefreshFailed || error == .acceptedResponseUnreadable {
+                    Button("Refresh") { Task { await collections.refreshPlaylistAfterConflict() } }
+                        .font(.caption)
+                } else if error == .conflictRequiresReview {
                     Button("Review Updated Order") { collections.clearPlaylistMutationError() }
                         .font(.caption)
                 } else {
@@ -1230,6 +1298,10 @@ private struct PlaylistMutationFeedbackRow: View {
         switch error {
         case .conflictRequiresReview:
             "This playlist changed on the server."
+        case .conflictRefreshFailed:
+            "Could not refresh the changed playlist. Refresh before saving again."
+        case .acceptedResponseUnreadable:
+            "The server accepted the change, but its response could not be read. Refresh to see the result."
         case .invalidRequest:
             "The server could not accept this change. Check the playlist and selected tracks."
         case .permissionDenied:
@@ -1267,7 +1339,7 @@ private struct LibraryTrackList: View {
         LazyVStack(spacing: 0) {
             ForEach(tracks.indices, id: \.self) { index in
                 let track = tracks[index]
-                let liked = collections.likedSet.contains(track.id)
+                let liked = collections.effectiveLike(track.id)
                 HStack(spacing: 0) {
                     Button {
                         if let context { collections.record(context) }
@@ -1285,6 +1357,7 @@ private struct LibraryTrackList: View {
                                 Task { await collections.toggleLike(track) }
                             }
                             .disabled(collections.mutationBusy)
+                            if collections.hasPendingLike(track.id) { Text("Queued") }
                         }
                         Button("Add to queue", systemImage: "text.append") { playback.append([track]) }
                         if let onMoveToTrash {
@@ -1295,6 +1368,9 @@ private struct LibraryTrackList: View {
                         HStack(spacing: 0) {
                             if liked {
                                 Image(systemName: "heart.fill").font(.caption).foregroundStyle(DowntifyStyle.accent)
+                            }
+                            if collections.hasPendingLike(track.id) {
+                                Image(systemName: "clock").font(.caption).accessibilityLabel("Queued")
                             }
                             Image(systemName: "ellipsis")
                         }

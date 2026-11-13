@@ -57,6 +57,22 @@ final class APIClientContractTests: XCTestCase {
         }
     }
 
+    func testCollectionQueuePreservesNetworkErrorsOnProbeAndWrite() async throws {
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: nil, role: nil, token: "secret",
+                                    allowsInsecureHTTP: false)
+        for failProbe in [true, false] {
+            let api = LibraryCollectionsAPI(transport: FailingCollectionTransport(failProbe: failProbe),
+                                            preservesTransportErrors: true)
+            do {
+                try await api.setLiked(true, trackID: "song", session: session)
+                XCTFail("Expected a network error")
+            } catch let error as URLError {
+                XCTAssertEqual(error.code, .networkConnectionLost)
+            }
+        }
+    }
+
     func testHTTPRequestsRequireExplicitConsentBeforeSending() async throws {
         let loader = StubLoader()
         let address = try ServerAddress("http://music.local")
@@ -257,13 +273,17 @@ final class APIClientContractTests: XCTestCase {
         let session = playlistMutationSession()
         let api = LibraryCollectionsAPI(transport: loader)
 
-        try await api.createPlaylist(name: "Night", session: session)
-        try await api.renamePlaylist(name: "Old", to: "Night", session: session)
-        try await api.editPlaylistTracks(
+        let created = try await api.createPlaylist(name: "Night", session: session)
+        let renamed = try await api.renamePlaylist(name: "Old", to: "Night", session: session)
+        let edited = try await api.editPlaylistTracks(
             name: "Night", add: ["a", "a"], remove: ["b"],
             removeEntries: [.init(trackID: "a", occurrence: 1)], allowDuplicates: true, session: session
         )
-        try await api.reorderPlaylist(name: "Night", trackIDs: ["a", "a"], session: session)
+        let reordered = try await api.reorderPlaylist(name: "Night", trackIDs: ["a", "a"], session: session)
+        for response in [created, renamed, edited, reordered] {
+            XCTAssertEqual(response.name, "Night")
+            XCTAssertEqual(response.trackIDs, ["a", "a"])
+        }
 
         let writes = loader.requests.enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
         XCTAssertEqual(writes.map(\.httpMethod), ["POST", "POST", "POST", "PUT"])
@@ -315,6 +335,18 @@ final class APIClientContractTests: XCTestCase {
         XCTAssertNil(minimal.added)
         XCTAssertNil(minimal.removed)
         XCTAssertNil(minimal.already)
+    }
+
+    func testPlaylistMutationReportsUnreadableAcceptedResponseWithoutRetrying() async throws {
+        let info = #"{"product":"Downtify","api_version":1,"server_id":"srv"}"#
+        let loader = SequenceLoader(bodies: [info, "not json"])
+        do {
+            _ = try await LibraryCollectionsAPI(transport: loader)
+                .createPlaylist(name: "Night", session: playlistMutationSession())
+            XCTFail("Expected unreadable accepted response")
+        } catch PlaylistWriteError.acceptedResponseUnreadable {
+            XCTAssertEqual(loader.requests.count, 2)
+        }
     }
 
     func testPlaylistMutationRejectsRequestsAboveServerLimitsBeforeSending() async throws {
@@ -385,6 +417,15 @@ private final class SequenceLoader: HTTPDataLoading {
         let status = statuses.removeFirst()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(bodies.removeFirst().utf8), response)
+    }
+}
+
+private struct FailingCollectionTransport: HTTPDataLoading {
+    let failProbe: Bool
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        if failProbe || request.url?.path != "/api/server/info" { throw URLError(.networkConnectionLost) }
+        let data = Data(#"{"product":"Downtify","api_version":1,"server_id":"srv"}"#.utf8)
+        return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
 }
 

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Network
 import SwiftUI
 
 enum LibraryTrackOrdering {
@@ -175,6 +176,8 @@ final class LibraryCollectionsModel: ObservableObject {
 
     enum PlaylistMutationError: Equatable {
         case conflictRequiresReview
+        case conflictRefreshFailed
+        case acceptedResponseUnreadable
         case invalidRequest
         case permissionDenied
         case notFound
@@ -204,6 +207,7 @@ final class LibraryCollectionsModel: ObservableObject {
     @Published private(set) var actionError: LocalizedStringKey?
     @Published private(set) var activePlaylistMutation: PlaylistMutationOperation?
     @Published private(set) var playlistMutationError: PlaylistMutationError?
+    @Published private(set) var pendingActions: [PendingCollectionAction] = []
     private let api: any LibraryCollectionsFetching
     private let database: LibraryDatabase
     private let sessionUpdates: @Sendable () async throws -> AsyncStream<DeviceSession?>
@@ -214,21 +218,40 @@ final class LibraryCollectionsModel: ObservableObject {
     private var session: DeviceSession?
     private var generation = 0
     private var playlistNameAliases: [String: String] = [:]
+    private let verifySession: (DeviceSession) async -> Bool
+    private var actionTask: Task<Void, Never>?
+    private var enqueueTask: Task<Void, Never>?
+    private var networkMonitor: NWPathMonitor?
+    private var pathAvailable = false
+    private var appActive = false
 
-    init(api: any LibraryCollectionsFetching = LibraryCollectionsAPI(), database: LibraryDatabase,
-         sessionUpdates: @escaping @Sendable () async throws -> AsyncStream<DeviceSession?>) {
+    init(api: any LibraryCollectionsFetching = LibraryCollectionsAPI(preservesTransportErrors: true), database: LibraryDatabase,
+         sessionUpdates: @escaping @Sendable () async throws -> AsyncStream<DeviceSession?>,
+         verifySession: @escaping (DeviceSession) async -> Bool = { _ in false }) {
         self.api = api
         self.database = database
         self.sessionUpdates = sessionUpdates
+        self.verifySession = verifySession
     }
 
     deinit {
         observation?.cancel()
         refreshTask?.cancel()
+        actionTask?.cancel()
+        enqueueTask?.cancel()
+        networkMonitor?.cancel()
     }
 
     func start() {
         guard observation == nil else { return }
+        let monitor = NWPathMonitor()
+        networkMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                self?.setActionsPathAvailable(path.status == .satisfied)
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "app.downtify.collection-actions"))
         let updates = sessionUpdates
         observation = Task { [weak self] in
             do {
@@ -301,66 +324,250 @@ final class LibraryCollectionsModel: ObservableObject {
         await task.value
     }
 
+    func effectiveLike(_ trackID: String) -> Bool {
+        for action in pendingActions.reversed() where action.status == .queued {
+            if case .like(let id) = action.target, id == trackID { return action.desiredValue }
+        }
+        return likedSet.contains(trackID)
+    }
+
+    func effectiveFavorite(_ playlist: LibraryPlaylist) -> Bool {
+        for action in pendingActions.reversed() where action.status == .queued {
+            if case .favorite(let name, _, _) = action.target, name == playlist.name { return action.desiredValue }
+        }
+        return playlist.favorite ?? false
+    }
+
+    func hasPendingLike(_ trackID: String) -> Bool {
+        pendingActions.contains { action in
+            guard action.status == .queued, case .like(let id) = action.target else { return false }
+            return id == trackID
+        }
+    }
+
+    func hasPendingFavorite(_ name: String) -> Bool {
+        pendingActions.contains { action in
+            guard action.status == .queued, case .favorite(let target, _, _) = action.target else { return false }
+            return target == name
+        }
+    }
+
     func toggleLike(_ track: LibraryTrack) async {
         guard likedIDs != nil else { return }
-        let liked = !likedSet.contains(track.id)
-        await mutate(failure: "Could not update this song’s like. Try again.") { session in
-            try await api.setLiked(liked, trackID: track.id, session: session)
-        } apply: {
-            let remaining = (likedIDs ?? []).filter { $0 != track.id }
-            applyLikes(liked ? [track.id] + remaining : remaining)
+        await enqueue { [weak self] in
+            guard let self else { return nil }
+            return PendingCollectionAction(target: .like(trackID: track.id), desiredValue: !self.effectiveLike(track.id))
         }
     }
 
     func toggleFavorite(_ name: String) async {
-        guard let old = playlist(named: name)?.favorite else { return }
-        await mutate(failure: "Could not update this playlist’s favorite. Try again.") { session in
-            try await api.setFavorite(!old, name: name, session: session)
-        } apply: {
-            guard let index = playlists?.firstIndex(where: { $0.name == name }) else { return }
-            playlists?[index].favorite = !old
+        await enqueue { [weak self] in
+            guard let self, let playlist = self.playlist(named: name), playlist.favorite != nil else { return nil }
+            return PendingCollectionAction(target: .favorite(name: playlist.name, owner: playlist.owner, manual: playlist.manual),
+                                           desiredValue: !self.effectiveFavorite(playlist))
         }
     }
 
+    private func enqueue(_ make: @escaping @MainActor () -> PendingCollectionAction?) async {
+        guard let session else { return }
+        let request = generation
+        let prior = enqueueTask
+        let task = Task { [weak self] in
+            await prior?.value
+            guard let self, !Task.isCancelled, self.generation == request, let action = make() else { return }
+            do {
+                try await self.database.appendPendingAction(action, in: self.scope(session), deviceID: session.deviceID)
+                guard self.generation == request, !Task.isCancelled else { return }
+                self.pendingActions.append(action)
+                self.startActionDrain()
+            } catch {
+                guard self.generation == request else { return }
+                self.actionError = "Could not save this action. Please try again."
+            }
+        }
+        enqueueTask = task
+        await task.value
+    }
+
+    func dismissAction(_ id: UUID) async {
+        guard let session, let action = pendingActions.first(where: { $0.id == id }), action.status != .queued else { return }
+        let request = generation
+        do {
+            try await database.removePendingAction(id, in: scope(session), deviceID: session.deviceID)
+            guard request == generation else { return }
+            pendingActions.removeAll { $0.id == id }
+        } catch { actionError = "Could not remove this action. Please try again." }
+    }
+
+    func setActionsPathAvailable(_ available: Bool) {
+        pathAvailable = available
+        if available { startActionDrain() }
+        else { actionTask?.cancel() }
+    }
+
+    func setActionsActive(_ active: Bool) {
+        appActive = active
+        if active { startActionDrain() }
+        else { actionTask?.cancel() }
+    }
+
+    private func startActionDrain() {
+        guard actionTask == nil, appActive, pathAvailable, session != nil else { return }
+        let request = generation
+        actionTask = Task { [weak self] in await self?.drainActions(generation: request) }
+    }
+
+    private func drainActions(generation request: Int) async {
+        defer {
+            if request == generation {
+                actionTask = nil
+                if Task.isCancelled && appActive && pathAvailable { startActionDrain() }
+            }
+        }
+        while request == generation, appActive, pathAvailable, !Task.isCancelled,
+              let session, let index = pendingActions.firstIndex(where: { $0.status == .queued }) {
+            var action = pendingActions[index]
+            if action.requiresVerification == true {
+                let verified = await verifySession(session)
+                guard request == generation, !Task.isCancelled else { return }
+                if !verified {
+                    // Verification can fail transiently while the path remains available.
+                    // Recheck without consuming a write attempt.
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    continue
+                }
+                action.requiresVerification = false
+                if action.attempts >= 5 {
+                    action.status = .failed
+                    action.failure = String(localized: "Server returned HTTP \(Int(401)).")
+                    action.nextAttempt = nil
+                }
+                do {
+                    try await database.updatePendingAction(action, in: scope(session), deviceID: session.deviceID)
+                    guard request == generation, !Task.isCancelled else { return }
+                    replacePendingAction(action)
+                } catch {
+                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    return
+                }
+                continue
+            }
+            if let next = action.nextAttempt, next > Date() {
+                do { try await Task.sleep(for: .seconds(next.timeIntervalSinceNow)) }
+                catch { return }
+                continue
+            }
+            do {
+                if case .favorite(let name, let owner, let manual) = action.target {
+                    let current = try await api.playlists(for: session)
+                    try Task.checkCancellation()
+                    guard let match = current.first(where: { $0.name == name && $0.liked != true }),
+                          (owner == nil || owner == match.owner), (manual == nil || manual == match.manual) else {
+                        throw PendingActionFailure.targetChanged
+                    }
+                }
+                try Task.checkCancellation()
+                switch action.target {
+                case .like(let id): try await api.setLiked(action.desiredValue, trackID: id, session: session)
+                case .favorite(let name, _, _): try await api.setFavorite(action.desiredValue, name: name, session: session)
+                }
+                guard request == generation, !Task.isCancelled else { return }
+                action.status = .sent
+                action.nextAttempt = nil
+                do {
+                    try await database.updatePendingAction(action, in: scope(session), deviceID: session.deviceID)
+                } catch {
+                    guard request == generation else { return }
+                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    return
+                }
+                guard request == generation, !Task.isCancelled else { return }
+                replacePendingAction(action)
+                // An acknowledged value is confirmed until the authoritative refresh completes.
+                switch action.target {
+                case .like(let id):
+                    let remaining = (likedIDs ?? []).filter { $0 != id }
+                    applyLikes(action.desiredValue ? [id] + remaining : remaining)
+                case .favorite(let name, _, _):
+                    if let index = playlists?.firstIndex(where: { $0.name == name }) {
+                        playlists?[index].favorite = action.desiredValue
+                    }
+                }
+                await refresh(for: session)
+            } catch is CancellationError { return }
+            catch {
+                guard request == generation, !Task.isCancelled else { return }
+                action.attempts += 1
+                if case APIError.httpStatus(401, _) = error {
+                    // Persist the verification barrier before trying the verifier. Relaunch or
+                    // foregrounding must not resend until the pairing has been confirmed.
+                    action.requiresVerification = true
+                    action.nextAttempt = Date().addingTimeInterval(pow(2.0, Double(min(action.attempts, 4))))
+                } else if let delay = Self.retryDelay(for: error, attempt: action.attempts), action.attempts < 5 {
+                    action.nextAttempt = Date().addingTimeInterval(delay)
+                } else {
+                    action.status = .failed
+                    action.failure = failureMessage(for: error)
+                    action.nextAttempt = nil
+                }
+                do {
+                    try await database.updatePendingAction(action, in: scope(session), deviceID: session.deviceID)
+                    guard request == generation, !Task.isCancelled else { return }
+                    replacePendingAction(action)
+                } catch {
+                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    return
+                }
+            }
+        }
+    }
+
+    private enum PendingActionFailure: Error { case targetChanged }
+
+    static func retryDelay(for error: Error, attempt: Int) -> TimeInterval? {
+        let base = pow(2.0, Double(attempt))
+        if let error = error as? URLError {
+            switch error.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost,
+                 .dnsLookupFailed, .cannotConnectToHost: return base
+            default: return nil
+            }
+        }
+        if case APIError.httpStatus(let status, let retryAfter) = error,
+           [401, 408, 429, 502, 503, 504].contains(status) {
+            return max(base, retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? 0)
+        }
+        return nil
+    }
+
+    private func failureMessage(for error: Error) -> String {
+        if error is PendingActionFailure {
+            return String(localized: "The playlist changed or is no longer available. Choose it again.")
+        }
+        if case APIError.httpStatus(let status, _) = error { return String(localized: "Server returned HTTP \(status).") }
+        return String(localized: "The action could not be sent. Choose the item and try again.")
+    }
+
+    private func replacePendingAction(_ action: PendingCollectionAction) {
+        if let index = pendingActions.firstIndex(where: { $0.id == action.id }) { pendingActions[index] = action }
+    }
+
     func createPlaylist(name: String) async {
-        await mutatePlaylist(.creating) { session in
+        _ = await mutatePlaylist(.creating) { session in
             try await api.createPlaylist(name: name, session: session)
         }
     }
 
     func renamePlaylist(name: String, to newName: String) async {
-        guard let session, !mutationBusy else { return }
-        let request = generation
         let currentName = playlist(named: name)?.name ?? name
-        await mutatePlaylist(.renaming) { session in
+        _ = await mutatePlaylist(.renaming) { session in
             try await api.renamePlaylist(name: currentName, to: newName, session: session)
         }
-        guard request == generation, self.session == session, playlistMutationError == nil else { return }
-
-        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == currentName }
-        for alias in aliases {
-            playlistNameAliases[alias] = newName
-        }
-        playlistNameAliases[currentName] = newName
-        if name != currentName { playlistNameAliases[name] = newName }
-        recents = recents.map { context in
-            guard case .playlist(let recentName) = context,
-                  recentName == currentName || recentName == name else { return context }
-            return .playlist(newName)
-        }
-        let recentContexts = recents
-        let prior = recentWrite
-        let write = Task {
-            await prior?.value
-            await save(recentContexts, key: "recents", session: session)
-        }
-        recentWrite = write
-        await write.value
     }
 
     func addTracks(_ trackIDs: [String], to name: String, allowDuplicates: Bool = false) async {
         guard !trackIDs.isEmpty else { return }
-        await mutatePlaylist(.addingTracks) { session in
+        _ = await mutatePlaylist(.addingTracks) { session in
             try await api.editPlaylistTracks(
                 name: name, add: trackIDs, remove: nil, removeEntries: nil,
                 allowDuplicates: allowDuplicates, session: session
@@ -371,7 +578,7 @@ final class LibraryCollectionsModel: ObservableObject {
     /// Removes every occurrence of each supplied track ID.
     func removeTracks(_ trackIDs: [String], from name: String) async {
         guard !trackIDs.isEmpty else { return }
-        await mutatePlaylist(.removingTracks) { session in
+        _ = await mutatePlaylist(.removingTracks) { session in
             try await api.editPlaylistTracks(
                 name: name, add: nil, remove: trackIDs, removeEntries: nil,
                 allowDuplicates: nil, session: session
@@ -386,7 +593,7 @@ final class LibraryCollectionsModel: ObservableObject {
             return
         }
         let entry = PlaylistTrackEditsRequestDTO.RemovalEntry(trackID: trackID, occurrence: occurrence)
-        await mutatePlaylist(.removingTrack) { session in
+        _ = await mutatePlaylist(.removingTrack) { session in
             try await api.editPlaylistTracks(
                 name: name, add: nil, remove: nil, removeEntries: [entry],
                 allowDuplicates: nil, session: session
@@ -402,68 +609,128 @@ final class LibraryCollectionsModel: ObservableObject {
             playlistMutationError = .invalidRequest
             return
         }
-        await mutatePlaylist(.reordering) { session in
+        _ = await mutatePlaylist(.reordering) { session in
             try await api.reorderPlaylist(name: name, trackIDs: trackIDs, session: session)
         }
     }
 
     private func mutatePlaylist(
         _ operation: PlaylistMutationOperation,
-        write: (DeviceSession) async throws -> Void
-    ) async {
-        guard let session, !mutationBusy else { return }
+        write: (DeviceSession) async throws -> PlaylistMutationResponseDTO
+    ) async -> PlaylistMutationResponseDTO? {
+        guard let session, !mutationBusy else { return nil }
         let request = generation
         mutationBusy = true
         activePlaylistMutation = operation
         playlistMutationError = nil
         actionError = nil
         await refreshTask?.value
-        guard request == generation else { return }
+        guard request == generation else { return nil }
+        var response: PlaylistMutationResponseDTO?
         do {
-            try await write(session)
+            response = try await write(session)
+            if let response, request == generation {
+                applyPlaylistResponse(response)
+                if operation == .renaming, let previous = response.previous {
+                    applyPlaylistRename(from: previous, to: response.name, session: session)
+                }
+            }
         } catch {
-            guard request == generation else { return }
+            guard request == generation else { return nil }
             if case APIError.httpStatus(let status, _) = error {
                 // A stale order must be reviewed against the refreshed authoritative list.
                 // Never resubmit the original sequence automatically.
                 playlistMutationError = status == 409 && operation == .reordering
                     ? .conflictRequiresReview : PlaylistMutationError.fromHTTPStatus(status)
+            } else if error is PlaylistWriteError {
+                playlistMutationError = .acceptedResponseUnreadable
             } else {
                 playlistMutationError = .unexpected
             }
         }
-        guard request == generation else { return }
+        guard request == generation else { return nil }
         mutationBusy = false
         activePlaylistMutation = nil
         await refresh(for: session)
+        if playlistMutationError == .conflictRequiresReview && playlistState != .ready {
+            playlistMutationError = .conflictRefreshFailed
+        }
+        return response
     }
 
-    private func mutate(failure: LocalizedStringKey, write: (DeviceSession) async throws -> Void, apply: () -> Void) async {
-        guard let session, !mutationBusy else { return }
-        let request = generation
-        mutationBusy = true
-        await refreshTask?.value
-        guard request == generation else { return }
-        do {
-            try await write(session)
-            guard request == generation else { return }
-            apply()
-            if let playlists { await save(playlists, key: "playlists", session: session) }
-            guard request == generation else { return }
-            if let likedIDs { await save(likedIDs, key: "likes", session: session) }
-        } catch {
-            guard request == generation else { return }
-            actionError = failure
+    private func applyPlaylistRename(from previous: String, to canonicalName: String, session: DeviceSession) {
+        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == previous }
+        for alias in aliases { playlistNameAliases[alias] = canonicalName }
+        playlistNameAliases[previous] = canonicalName
+        recents = recents.map { context in
+            guard case .playlist(let recentName) = context, recentName == previous else { return context }
+            return .playlist(canonicalName)
         }
-        guard request == generation else { return }
-        mutationBusy = false
-        await refresh(for: session)
+        let recentContexts = recents
+        let prior = recentWrite
+        let write = Task {
+            await prior?.value
+            await save(recentContexts, key: "recents", session: session)
+        }
+        recentWrite = write
+    }
+
+    private func applyPlaylistResponse(_ response: PlaylistMutationResponseDTO) {
+        let oldName = response.previous ?? response.name
+        guard let index = playlists?.firstIndex(where: { $0.name == oldName || $0.name == response.name }),
+              let old = playlists?[index] else { return }
+        playlists?[index] = LibraryPlaylist(
+            name: response.name, displayName: oldName == response.name ? old.displayName : nil,
+            liked: old.liked, favorite: old.favorite, trackIDs: response.trackIDs, cover: old.cover,
+            owner: old.owner, mine: old.mine, manual: response.manual, canEditTracks: old.canEditTracks,
+            visibility: old.visibility, sharedWithMe: old.sharedWithMe, sharedWith: old.sharedWith, editors: old.editors
+        )
+    }
+
+    func refreshPlaylistAfterConflict() async {
+        let wasConflict = playlistMutationError == .conflictRefreshFailed
+        await refresh()
+        if playlistState == .ready { playlistMutationError = wasConflict ? .conflictRequiresReview : nil }
+    }
+
+    // A durable tombstone prevents an old pairing's rows being replayed if deleting
+    // them failed during sign-out. It contains no credentials.
+    private func actionDiscardKey(_ session: DeviceSession) -> String {
+        let values = [session.serverID, scope(session).account, session.deviceID]
+        let data = (try? JSONEncoder().encode(values)) ?? Data()
+        return "pending-actions.discard." + data.base64EncodedString()
+    }
+
+    private func discardActions(for session: DeviceSession) async throws {
+        let key = actionDiscardKey(session)
+        UserDefaults.standard.set(true, forKey: key)
+        // Flush the marker before deleting so a crash cannot replay stale rows.
+        guard UserDefaults.standard.synchronize() else { throw LibraryDatabaseError.storageUnavailable }
+        try await database.removePendingActions(in: scope(session), deviceID: session.deviceID)
+        UserDefaults.standard.removeObject(forKey: key)
+        guard UserDefaults.standard.synchronize() else {
+            UserDefaults.standard.set(true, forKey: key)
+            throw LibraryDatabaseError.storageUnavailable
+        }
     }
 
     private func changeSession(_ newSession: DeviceSession?) async {
         guard session != newSession else { return }
+        let previous = session
         generation += 1
         let request = generation
+        actionTask?.cancel()
+        actionTask = nil
+        enqueueTask?.cancel()
+        await enqueueTask?.value
+        enqueueTask = nil
+        var discardFailed = false
+        if let previous {
+            do { try await discardActions(for: previous) }
+            catch { discardFailed = true }
+        }
+        guard request == generation else { return }
+        pendingActions = []
         session = newSession
         refreshTask?.cancel()
         refreshTask = nil
@@ -475,11 +742,23 @@ final class LibraryCollectionsModel: ObservableObject {
         playlistState = .loading
         likesState = .loading
         mutationBusy = false
-        actionError = nil
+        actionError = discardFailed ? "Could not clear pending actions for the previous session." : nil
         supportsPlaylistEditing = false
         activePlaylistMutation = nil
         playlistMutationError = nil
         guard let newSession else { return }
+        do {
+            if UserDefaults.standard.bool(forKey: actionDiscardKey(newSession)) {
+                try await discardActions(for: newSession)
+            }
+            guard request == generation else { return }
+            pendingActions = try await database.pendingActions(in: scope(newSession), deviceID: newSession.deviceID)
+        } catch {
+            actionError = "Could not load pending actions. Delivery has stopped."
+            return
+        }
+        guard request == generation else { return }
+        startActionDrain()
 
         Task { await refreshPlaylistEditingCapability(for: newSession, generation: request) }
 

@@ -18,9 +18,11 @@ protocol LibraryFeedFetching {
 
 struct LibraryAPIClient: LibraryFeedFetching {
     private let transport: any HTTPDataLoading
+    private let preservesTransportErrors: Bool
 
-    init(transport: any HTTPDataLoading = ConnectionHTTPTransport()) {
+    init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), preservesTransportErrors: Bool = false) {
         self.transport = transport
+        self.preservesTransportErrors = preservesTransportErrors
     }
 
     func fetch(
@@ -60,7 +62,7 @@ struct LibraryAPIClient: LibraryFeedFetching {
         guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else {
             throw APIError.insecureTransportConsentRequired
         }
-        let info = try await APIClient(session: transport).serverInfo(at: address)
+        let info = try await APIClient(session: transport, preservesTransportErrors: preservesTransportErrors).serverInfo(at: address)
         try Task.checkCancellation()
         guard info.serverID == session.serverID else { throw ConnectionError.differentServer }
         return address

@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import Downtify
 
 @MainActor
@@ -366,13 +367,293 @@ final class LibraryPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.recents, [.album("album")])
 
         await model.toggleLike(makeTrack("cached"))
-        XCTAssertNotNil(model.actionError)
+        XCTAssertNil(model.actionError)
+        XCTAssertEqual(model.pendingActions.count, 1)
+        XCTAssertFalse(model.effectiveLike("cached"))
         XCTAssertEqual(model.likedIDs, ["cached"])
 
         continuation.yield(second)
         await waitUntil { model.playlistState == .unavailable && model.playlists == nil }
         XCTAssertNil(model.likedIDs)
         XCTAssertTrue(model.recents.isEmpty)
+        continuation.finish()
+    }
+
+    func testQueuedActionsSurviveRestartAndDrainInOrder() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        var model: LibraryCollectionsModel? = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model?.start()
+        continuation.yield(session)
+        await waitUntil { model?.likesState == .ready && model?.playlistState == .ready }
+        await model?.toggleLike(makeTrack("song"))
+        await model?.toggleLike(makeTrack("song"))
+        await model?.toggleFavorite("Mix")
+        XCTAssertEqual(model?.pendingActions.map(\.desiredValue), [true, false, true])
+        XCTAssertFalse(model?.effectiveLike("song") ?? true)
+        XCTAssertTrue(model?.effectiveFavorite(try XCTUnwrap(model?.playlist(named: "Mix"))) ?? false)
+        model = nil
+        continuation.finish()
+
+        let (restoredUpdates, restoredContinuation) = AsyncStream<DeviceSession?>.makeStream()
+        let restored = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { restoredUpdates })
+        restored.start()
+        restoredContinuation.yield(session)
+        await waitUntil { restored.pendingActions.count == 3 && restored.likesState == .ready }
+        XCTAssertEqual(restored.pendingActions.map(\.desiredValue), [true, false, true])
+        restored.setActionsPathAvailable(true)
+        restored.setActionsActive(true)
+        await waitUntil { restored.pendingActions.allSatisfy { $0.status == .sent } }
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:true", "like:song:false", "favorite:Mix:true"])
+        restoredContinuation.finish()
+    }
+
+    func testChangedFavoriteFailsAndLaterActionContinues() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready && model.playlistState == .ready }
+        await model.toggleFavorite("Mix")
+        await model.toggleLike(makeTrack("song"))
+        await feed.removePlaylist()
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntil { model.pendingActions.count == 2 && model.pendingActions[1].status == .sent }
+        XCTAssertEqual(model.pendingActions.first?.status, .failed)
+        XCTAssertNotNil(model.pendingActions.first?.failure)
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:true"])
+        let failed = try XCTUnwrap(model.pendingActions.first)
+        await model.dismissAction(failed.id)
+        XCTAssertEqual(model.pendingActions.count, 1)
+        continuation.finish()
+    }
+
+    func testQueueRetryClassificationAndBackoff() {
+        for attempt in 1...4 {
+            XCTAssertEqual(LibraryCollectionsModel.retryDelay(for: URLError(.timedOut), attempt: attempt),
+                           pow(2.0, Double(attempt)))
+        }
+        XCTAssertEqual(LibraryCollectionsModel.retryDelay(for: APIError.httpStatus(429, retryAfter: 30), attempt: 1), 30)
+        XCTAssertEqual(LibraryCollectionsModel.retryDelay(for: APIError.httpStatus(503, retryAfter: 1), attempt: 2), 4)
+        XCTAssertNil(LibraryCollectionsModel.retryDelay(for: APIError.httpStatus(403, retryAfter: nil), attempt: 1))
+        XCTAssertNil(LibraryCollectionsModel.retryDelay(for: URLError(.userAuthenticationRequired), attempt: 1))
+    }
+
+    func testRetryPersistsBackoffAndPreservesIntentAfterLostAcknowledgment() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.loseNextAcknowledgment()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntil { model.pendingActions.first?.attempts == 1 }
+        let queued = try XCTUnwrap(model.pendingActions.first)
+        XCTAssertEqual(queued.status, .queued)
+        XCTAssertGreaterThan(try XCTUnwrap(queued.nextAttempt).timeIntervalSinceNow, 1)
+        let deadline = ContinuousClock.now + .seconds(4)
+        while model.pendingActions.first?.status != .sent && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.pendingActions.first?.status, .sent)
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:true", "like:song:true"])
+        continuation.finish()
+    }
+
+    func testUnauthorizedActionWaitsForSessionVerification() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.failNextWrite(status: 401)
+        let verifier = PendingSessionVerifier()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates }) { _ in
+            await verifier.verify()
+        }
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntilAsync { await verifier.count() == 1 }
+        let writesBeforeVerification = await feed.recordedWrites()
+        XCTAssertTrue(writesBeforeVerification.isEmpty)
+        XCTAssertEqual(model.pendingActions.first?.status, .queued)
+        await verifier.allow()
+        try await Task.sleep(for: .milliseconds(50))
+        model.setActionsActive(true)
+        let deadline = ContinuousClock.now + .seconds(4)
+        while model.pendingActions.first?.status != .sent && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.pendingActions.first?.status, .sent)
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:true"])
+        continuation.finish()
+    }
+
+    func testPermanentHTTPFailureDoesNotBlockFollowingIntent() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.failNextWrite(status: 403)
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntil { model.pendingActions.count == 2 && model.pendingActions[1].status == .sent }
+        XCTAssertEqual(model.pendingActions.first?.status, .failed)
+        XCTAssertEqual(model.pendingActions.first?.failure, "Server returned HTTP 403.")
+        let writes = await feed.recordedWrites()
+        XCTAssertEqual(writes, ["like:song:false"])
+        continuation.finish()
+    }
+
+    func testFailedDiscardBlocksReplayAndRemainsVisible() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession(server: "failed-discard-test")
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(folder.appending(path: "library.sqlite").path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let trigger = "CREATE TRIGGER reject_action_delete BEFORE DELETE ON pending_collection_actions BEGIN SELECT RAISE(FAIL, 'test'); END;"
+        XCTAssertEqual(sqlite3_exec(db, trigger, nil, nil, nil), SQLITE_OK)
+        continuation.yield(nil)
+        await waitUntil { model.likedIDs == nil && model.actionError != nil }
+        let scope = LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID)
+        let keyData = try JSONEncoder().encode([session.serverID, scope.account, session.deviceID])
+        let key = "pending-actions.discard." + keyData.base64EncodedString()
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
+        model.setActionsActive(true)
+        model.setActionsPathAvailable(true)
+        continuation.yield(session)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNotNil(model.actionError)
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        let writes = await feed.recordedWrites()
+        XCTAssertTrue(writes.isEmpty)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
+        XCTAssertEqual(sqlite3_exec(db, "DROP TRIGGER reject_action_delete", nil, nil, nil), SQLITE_OK)
+        continuation.finish()
+    }
+
+    func testDiscardTombstonePreventsStaleActionsAfterRelaunch() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession(server: "discard-tombstone-test")
+        let scope = LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID)
+        let old = PendingCollectionAction(target: .like(trackID: "song"), desiredValue: true)
+        try await database.appendPendingAction(old, in: scope, deviceID: session.deviceID)
+        let keyData = try JSONEncoder().encode([session.serverID, scope.account, session.deviceID])
+        let key = "pending-actions.discard." + keyData.base64EncodedString()
+        UserDefaults.standard.set(true, forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let feed = PendingActionFeed()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        model.setActionsActive(true)
+        model.setActionsPathAvailable(true)
+        continuation.yield(session)
+        await waitUntil { model.likesState == .ready }
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key))
+        let stored = try await database.pendingActions(in: scope, deviceID: session.deviceID)
+        let writes = await feed.recordedWrites()
+        XCTAssertTrue(stored.isEmpty)
+        XCTAssertTrue(writes.isEmpty)
+        continuation.finish()
+    }
+
+    func testUnavailableActionStoreDoesNotClaimAnIntentWasQueued() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let database = LibraryDatabase(fileURL: folder)
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: PendingActionFeed(), database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.actionError != nil }
+        await model.toggleLike(makeTrack("song"))
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        XCTAssertNotNil(model.actionError)
+        continuation.finish()
+    }
+
+    func testInFlightResultDoesNotUpdateReplacementSession() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        await feed.pauseNextWrite()
+        let first = makeSession(server: "one")
+        let second = makeSession(server: "two")
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(first)
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        model.setActionsPathAvailable(true)
+        model.setActionsActive(true)
+        await waitUntilAsync { await feed.isWaiting() }
+        continuation.yield(second)
+        await waitUntil { model.pendingActions.isEmpty && model.likesState == .ready }
+        await feed.resumeWrite()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(model.pendingActions.isEmpty)
+        XCTAssertFalse(model.effectiveLike("song"))
+        let scope = LibraryScope(serverID: first.serverID, username: first.username, deviceID: first.deviceID)
+        let stored = try await database.pendingActions(in: scope, deviceID: first.deviceID)
+        XCTAssertTrue(stored.isEmpty)
+        continuation.finish()
+    }
+
+    func testSignOutDiscardsQueuedActions() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let feed = PendingActionFeed()
+        let session = makeSession()
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: feed, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(session)
+        await waitUntil { model.likesState == .ready }
+        await model.toggleLike(makeTrack("song"))
+        continuation.yield(nil)
+        await waitUntil { model.pendingActions.isEmpty && model.likedIDs == nil }
+        let scope = LibraryScope(serverID: session.serverID, username: session.username, deviceID: session.deviceID)
+        let stored = try await database.pendingActions(in: scope, deviceID: session.deviceID)
+        XCTAssertTrue(stored.isEmpty)
         continuation.finish()
     }
 
@@ -386,13 +667,17 @@ final class LibraryPresentationModelTests: XCTestCase {
         model.start()
         continuation.yield(makeSession())
         await waitUntil { model.playlistState == .ready && model.likesState == .ready }
+        model.setActionsActive(true)
+        model.setActionsPathAvailable(true)
         XCTAssertEqual(model.playlist(named: "stable")?.title, "Display label")
         await model.toggleFavorite("legacy")
         await model.toggleFavorite("stable")
         await model.toggleLike(makeTrack("song"))
-        XCTAssertEqual(model.playlist(named: "stable")?.favorite, true)
-        XCTAssertEqual(model.likedIDs, ["song", "prior"])
+        XCTAssertTrue(model.effectiveLike("song"))
         await model.toggleLike(makeTrack("song"))
+        XCTAssertFalse(model.effectiveLike("song"))
+        await waitUntil { model.pendingActions.count == 3 && model.pendingActions.allSatisfy { $0.status == .sent } }
+        XCTAssertEqual(model.playlist(named: "stable")?.favorite, true)
         XCTAssertEqual(model.likedIDs, ["prior"])
         let writes = await transport.writes
         XCTAssertEqual(writes, ["favorite:stable:true", "like:song:true", "like:song:false"])
@@ -466,6 +751,35 @@ final class LibraryPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.playlist(named: "Road")?.trackIDs, ["a", "b", "c"])
         let writes = await api.recordedWrites()
         XCTAssertEqual(writes.filter { $0.hasPrefix("reorder:") }, ["reorder:Road:b,a"])
+        continuation.finish()
+    }
+
+    func testCanonicalRenameAndFailedConflictRefresh() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a", "b"])])
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.playlistState == .ready }
+        model.record(.playlist("Road"))
+        await api.setCanonicalRename("Canonical")
+        await api.pauseNextRefresh()
+        let rename = Task { await model.renamePlaylist(name: "Road", to: " Requested ") }
+        await waitUntilAsync { await api.refreshIsWaiting() }
+        XCTAssertEqual(model.playlist(named: "Road")?.name, "Canonical")
+        XCTAssertEqual(model.recents, [.playlist("Canonical")])
+        await api.releaseRefresh()
+        await rename.value
+        await api.prepareConflict(with: playlist("Canonical", ids: ["a", "b", "c"]))
+        await api.setRefreshFailure(true)
+        await model.reorderPlaylist("Canonical", trackIDs: ["b", "a"])
+        XCTAssertEqual(model.playlistMutationError, .conflictRefreshFailed)
+        await api.setRefreshFailure(false)
+        await model.refreshPlaylistAfterConflict()
+        XCTAssertEqual(model.playlistMutationError, .conflictRequiresReview)
+        XCTAssertEqual(model.playlist(named: "Canonical")?.trackIDs, ["a", "b", "c"])
         continuation.finish()
     }
 
@@ -650,6 +964,63 @@ private func makeTrack(_ id: String, title: String? = nil, artist: String = "", 
 }
 
 
+private actor PendingActionFeed: LibraryCollectionsFetching {
+    private var available = true
+    private var liked = false
+    private var favorite = false
+    private var writes: [String] = []
+    private var loseAcknowledgment = false
+    private var failStatus: Int?
+    private var pauseWrite = false
+    private var waiting = false
+    private var writeContinuation: CheckedContinuation<Void, Never>?
+
+    func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
+        guard available else { return [] }
+        let json = #"[{"name":"Mix","owner":"owner","manual":true,"favorite":\#(favorite),"track_ids":[]}]"#
+        return try JSONDecoder().decode([LibraryPlaylist].self, from: Data(json.utf8))
+    }
+    func likes(for session: DeviceSession) async throws -> [String] { liked ? ["song"] : [] }
+    func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws {
+        if pauseWrite {
+            pauseWrite = false
+            waiting = true
+            await withCheckedContinuation { writeContinuation = $0 }
+            waiting = false
+            try Task.checkCancellation()
+        }
+        if let status = failStatus {
+            failStatus = nil
+            throw APIError.httpStatus(status, retryAfter: nil)
+        }
+        self.liked = liked
+        writes.append("like:\(trackID):\(liked)")
+        if loseAcknowledgment {
+            loseAcknowledgment = false
+            throw URLError(.networkConnectionLost)
+        }
+    }
+    func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws {
+        self.favorite = favorite
+        writes.append("favorite:\(name):\(favorite)")
+    }
+    func removePlaylist() { available = false }
+    func loseNextAcknowledgment() { loseAcknowledgment = true }
+    func failNextWrite(status: Int) { failStatus = status }
+    func pauseNextWrite() { pauseWrite = true }
+    func isWaiting() -> Bool { waiting }
+    func resumeWrite() { writeContinuation?.resume(); writeContinuation = nil }
+    func recordedWrites() -> [String] { writes }
+}
+
+private actor PendingSessionVerifier {
+    private var calls = 0
+    private var permitted = false
+    func verify() -> Bool { calls += 1; return permitted }
+    func allow() { permitted = true }
+    func count() -> Int { calls }
+}
+
 private struct CollectionsFeed: LibraryCollectionsFetching {
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] { throw APIError.transportFailure }
     func likes(for session: DeviceSession) async throws -> [String] { throw APIError.transportFailure }
@@ -662,6 +1033,11 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
     private let capabilities: [String: Bool]
     private var writes: [String] = []
     private var refreshCount = 0
+    private var failRefresh = false
+    private var pauseRefresh = false
+    private var refreshWaiting = false
+    private var refreshContinuation: CheckedContinuation<Void, Never>?
+    private var canonicalRename: String?
     private var nextWriteStatus: Int?
     private var conflictPlaylists: [String: LibraryPlaylist] = [:]
     private var pausedCapabilityIDs: Set<String> = []
@@ -683,6 +1059,13 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
 
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
         refreshCount += 1
+        if pauseRefresh {
+            pauseRefresh = false
+            refreshWaiting = true
+            await withCheckedContinuation { refreshContinuation = $0 }
+            refreshWaiting = false
+        }
+        if failRefresh { throw APIError.transportFailure }
         return playlistsByServer[session.serverID] ?? []
     }
 
@@ -698,22 +1081,25 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws {}
     func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws {}
 
-    func createPlaylist(name: String, session: DeviceSession) async throws {
+    func createPlaylist(name: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("create:\(name)")
         try await pauseOrFail()
         playlistsByServer[session.serverID, default: []].append(playlist(name, ids: []))
+        return response(name, ids: [])
     }
 
-    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws {
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("rename:\(name):\(newName)")
         try await pauseOrFail()
-        replacePlaylist(named: name, with: newName, session: session)
+        let canonical = canonicalRename ?? newName
+        replacePlaylist(named: name, with: canonical, session: session)
+        return response(canonical, ids: playlistsByServer[session.serverID]?.first(where: { $0.name == canonical })?.trackIDs ?? [], previous: name)
     }
 
     func editPlaylistTracks(
         name: String, add: [String]?, remove: [String]?,
         removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?, allowDuplicates: Bool?, session: DeviceSession
-    ) async throws {
+    ) async throws -> PlaylistMutationResponseDTO {
         let entries = removeEntries.map { $0.map { "\($0.trackID)@\($0.occurrence)" }.joined(separator: ",") } ?? "-"
         let additions = add.map { $0.joined(separator: ",") } ?? "-"
         let removals = remove.map { $0.joined(separator: ",") } ?? "-"
@@ -721,7 +1107,7 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
         writes.append("edit:\(name):add=\(additions):remove=\(removals):remove_entries=\(entries):allow_duplicates=\(duplicateFlag)")
         try await pauseOrFail()
         guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }),
-              let current = playlistsByServer[session.serverID]?[index] else { return }
+              let current = playlistsByServer[session.serverID]?[index] else { throw APIError.httpStatus(404, retryAfter: nil) }
         var ids = current.trackIDs
         for id in add ?? [] where allowDuplicates == true || !ids.contains(id) { ids.append(id) }
         for id in remove ?? [] { ids.removeAll { $0 == id } }
@@ -730,9 +1116,10 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
             if entry.occurrence < positions.count { ids.remove(at: positions[entry.occurrence]) }
         }
         playlistsByServer[session.serverID]?[index] = playlist(name, ids: ids)
+        return response(name, ids: ids)
     }
 
-    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws {
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("reorder:\(name):\(trackIDs.joined(separator: ","))")
         try await pauseOrFail()
         if let conflict = conflictPlaylists.removeValue(forKey: session.serverID) {
@@ -741,10 +1128,20 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
             }
             throw APIError.httpStatus(409, retryAfter: nil)
         }
-        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) else { return }
+        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) else { throw APIError.httpStatus(404, retryAfter: nil) }
         playlistsByServer[session.serverID]?[index] = playlist(name, ids: trackIDs)
+        return response(name, ids: trackIDs)
     }
 
+    private func response(_ name: String, ids: [String], previous: String? = nil) -> PlaylistMutationResponseDTO {
+        PlaylistMutationResponseDTO(name: name, manual: true, count: ids.count, trackIDs: ids, previous: previous, added: nil, removed: nil, already: nil)
+    }
+
+    func pauseNextRefresh() { pauseRefresh = true }
+    func refreshIsWaiting() -> Bool { refreshWaiting }
+    func releaseRefresh() { refreshContinuation?.resume(); refreshContinuation = nil }
+    func setRefreshFailure(_ fail: Bool) { failRefresh = fail }
+    func setCanonicalRename(_ name: String) { canonicalRename = name }
     func failNextWrite(status: Int) { nextWriteStatus = status }
     func prepareConflict(with playlist: LibraryPlaylist, serverID: String = "server") {
         conflictPlaylists[serverID] = playlist
