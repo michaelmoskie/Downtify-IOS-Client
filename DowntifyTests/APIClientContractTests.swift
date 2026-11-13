@@ -57,6 +57,22 @@ final class APIClientContractTests: XCTestCase {
         }
     }
 
+    func testCollectionQueuePreservesNetworkErrorsOnProbeAndWrite() async throws {
+        let session = DeviceSession(baseAddress: "https://example.test", serverID: "srv", serverName: "Music",
+                                    deviceID: "device", username: nil, role: nil, token: "secret",
+                                    allowsInsecureHTTP: false)
+        for failProbe in [true, false] {
+            let api = LibraryCollectionsAPI(transport: FailingCollectionTransport(failProbe: failProbe),
+                                            preservesTransportErrors: true)
+            do {
+                try await api.setLiked(true, trackID: "song", session: session)
+                XCTFail("Expected a network error")
+            } catch let error as URLError {
+                XCTAssertEqual(error.code, .networkConnectionLost)
+            }
+        }
+    }
+
     func testHTTPRequestsRequireExplicitConsentBeforeSending() async throws {
         let loader = StubLoader()
         let address = try ServerAddress("http://music.local")
@@ -401,6 +417,15 @@ private final class SequenceLoader: HTTPDataLoading {
         let status = statuses.removeFirst()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(bodies.removeFirst().utf8), response)
+    }
+}
+
+private struct FailingCollectionTransport: HTTPDataLoading {
+    let failProbe: Bool
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        if failProbe || request.url?.path != "/api/server/info" { throw URLError(.networkConnectionLost) }
+        let data = Data(#"{"product":"Downtify","api_version":1,"server_id":"srv"}"#.utf8)
+        return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
 }
 

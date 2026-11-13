@@ -80,8 +80,6 @@
 "Could not save playback progress to the server." = "Impossible d’enregistrer la progression de lecture sur le serveur.";
 "Could not sign out. Please try again." = "Impossible de se déconnecter. Réessayez.";
 "Could not start this download." = "Impossible de démarrer ce téléchargement.";
-"Could not update this playlist’s favorite. Try again." = "Impossible de modifier le statut favori de cette playlist. Réessayez.";
-"Could not update this song’s like. Try again." = "Impossible de modifier le j’aime de ce titre. Réessayez.";
 "Current episode" = "Épisode en cours";
 "Current track" = "Titre en cours";
 "Dark" = "Sombre";
@@ -469,3 +467,6 @@
 "Could not refresh the changed playlist. Refresh before saving again." = "Impossible d’actualiser la playlist modifiée. Actualisez-la avant d’enregistrer à nouveau.";
 "The server accepted the change, but its response could not be read. Refresh to see the result." = "Le serveur a accepté la modification, mais sa réponse est illisible. Actualisez pour voir le résultat.";
 "Refresh" = "Actualiser";
+"Pending Actions" = "Pending Actions";
+"No actions yet" = "No actions yet";
+"Sent" = "Sent";

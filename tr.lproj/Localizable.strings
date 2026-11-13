@@ -80,8 +80,6 @@
 "Could not save playback progress to the server." = "Oynatma ilerlemesi sunucuya kaydedilemedi.";
 "Could not sign out. Please try again." = "Oturum kapatılamadı. Lütfen yeniden deneyin.";
 "Could not start this download." = "Bu indirme başlatılamadı.";
-"Could not update this playlist’s favorite. Try again." = "Bu çalma listesi favorisi güncellenemedi. Yeniden deneyin.";
-"Could not update this song’s like. Try again." = "Bu şarkı beğenisi güncellenemedi. Yeniden deneyin.";
 "Current episode" = "Geçerli bölüm";
 "Current track" = "Geçerli parça";
 "Dark" = "Koyu";
@@ -469,3 +467,6 @@
 "Could not refresh the changed playlist. Refresh before saving again." = "Değişen çalma listesi yenilenemedi. Tekrar kaydetmeden önce yenileyin.";
 "The server accepted the change, but its response could not be read. Refresh to see the result." = "Sunucu değişikliği kabul etti ancak yanıtı okunamadı. Sonucu görmek için yenileyin.";
 "Refresh" = "Yenile";
+"Pending Actions" = "Pending Actions";
+"No actions yet" = "No actions yet";
+"Sent" = "Sent";

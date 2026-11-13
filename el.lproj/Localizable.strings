@@ -80,8 +80,6 @@
 "Could not save playback progress to the server." = "Δεν ήταν δυνατή η αποθήκευση της προόδου αναπαραγωγής στον διακομιστή.";
 "Could not sign out. Please try again." = "Δεν ήταν δυνατή η αποσύνδεση. Δοκιμάστε ξανά.";
 "Could not start this download." = "Δεν ήταν δυνατή η έναρξη αυτής της λήψης.";
-"Could not update this playlist’s favorite. Try again." = "Δεν ήταν δυνατή η αλλαγή της αγαπημένης λίστας. Δοκιμάστε ξανά.";
-"Could not update this song’s like. Try again." = "Δεν ήταν δυνατή η αλλαγή του «μου αρέσει» για αυτό το τραγούδι. Δοκιμάστε ξανά.";
 "Current episode" = "Τρέχον επεισόδιο";
 "Current track" = "Τρέχον τραγούδι";
 "Dark" = "Σκούρο";
@@ -469,3 +467,6 @@
 "Could not refresh the changed playlist. Refresh before saving again." = "Δεν ήταν δυνατή η ανανέωση της τροποποιημένης λίστας. Ανανεώστε πριν αποθηκεύσετε ξανά.";
 "The server accepted the change, but its response could not be read. Refresh to see the result." = "Ο διακομιστής δέχτηκε την αλλαγή, αλλά η απάντησή του δεν ήταν αναγνώσιμη. Ανανεώστε για να δείτε το αποτέλεσμα.";
 "Refresh" = "Ανανέωση";
+"Pending Actions" = "Pending Actions";
+"No actions yet" = "No actions yet";
+"Sent" = "Sent";

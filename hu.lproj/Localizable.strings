@@ -80,8 +80,6 @@
 "Could not save playback progress to the server." = "A lejátszási előrehaladás nem menthető a szerverre.";
 "Could not sign out. Please try again." = "A kijelentkezés nem sikerült. Próbáld újra.";
 "Could not start this download." = "A letöltés indítása nem sikerült.";
-"Could not update this playlist’s favorite. Try again." = "A lejátszási lista kedvenc állapotának frissítése nem sikerült. Próbáld újra.";
-"Could not update this song’s like. Try again." = "A dal kedvelésének frissítése nem sikerült. Próbáld újra.";
 "Current episode" = "Aktuális epizód";
 "Current track" = "Aktuális dal";
 "Dark" = "Sötét";
@@ -469,3 +467,6 @@
 "Could not refresh the changed playlist. Refresh before saving again." = "A módosított lejátszási lista nem frissíthető. Mentés előtt frissítse újra.";
 "The server accepted the change, but its response could not be read. Refresh to see the result." = "A szerver elfogadta a módosítást, de a válasza nem olvasható. Az eredményhez frissítsen.";
 "Refresh" = "Frissítés";
+"Pending Actions" = "Pending Actions";
+"No actions yet" = "No actions yet";
+"Sent" = "Sent";

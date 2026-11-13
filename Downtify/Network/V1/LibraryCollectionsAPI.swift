@@ -61,9 +61,11 @@ enum PlaylistWriteError: Error { case acceptedResponseUnreadable }
 
 struct LibraryCollectionsAPI: LibraryCollectionsFetching {
     private let transport: any HTTPDataLoading
+    private let preservesTransportErrors: Bool
 
-    init(transport: any HTTPDataLoading = ConnectionHTTPTransport()) {
+    init(transport: any HTTPDataLoading = ConnectionHTTPTransport(), preservesTransportErrors: Bool = false) {
         self.transport = transport
+        self.preservesTransportErrors = preservesTransportErrors
     }
 
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
@@ -142,7 +144,7 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
     }
 
     private func request(_ path: String, method: String, body: Data?, session: DeviceSession) async throws -> Data {
-        let address = try await LibraryAPIClient(transport: transport).verifiedAddress(for: session)
+        let address = try await LibraryAPIClient(transport: transport, preservesTransportErrors: preservesTransportErrors).verifiedAddress(for: session)
         var request = URLRequest(url: address.url(for: path), cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -151,7 +153,8 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        return try await APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
+        return try await APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP,
+                             preservesTransportErrors: preservesTransportErrors)
             .send(request, to: address)
     }
 

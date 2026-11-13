@@ -80,8 +80,6 @@
 "Could not save playback progress to the server." = "No se pudo guardar el progreso de reproducción en el servidor.";
 "Could not sign out. Please try again." = "No se pudo cerrar la sesión. Inténtalo de nuevo.";
 "Could not start this download." = "No se pudo iniciar esta descarga.";
-"Could not update this playlist’s favorite. Try again." = "No se pudo actualizar el favorito de esta lista. Inténtalo de nuevo.";
-"Could not update this song’s like. Try again." = "No se indicó que te gusta esta canción. Inténtalo de nuevo.";
 "Current episode" = "Episodio actual";
 "Current track" = "Canción actual";
 "Dark" = "Oscuro";
@@ -469,3 +467,6 @@
 "Could not refresh the changed playlist. Refresh before saving again." = "No se pudo actualizar la lista modificada. Actualízala antes de volver a guardar.";
 "The server accepted the change, but its response could not be read. Refresh to see the result." = "El servidor aceptó el cambio, pero no se pudo leer su respuesta. Actualiza para ver el resultado.";
 "Refresh" = "Actualizar";
+"Pending Actions" = "Pending Actions";
+"No actions yet" = "No actions yet";
+"Sent" = "Sent";
