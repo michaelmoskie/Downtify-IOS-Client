@@ -106,6 +106,9 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
                 continue
             if key.startswith("Similar to \\("):
                 continue
+            # Punctuation used to join localized Text fragments is not a standalone phrase.
+            if not any(char.isalnum() for char in key):
+                continue
             if key in non_localized_case_values:
                 continue
             source_keys.add(format_localization_key(key.replace('\\"', '"').replace('\\n', '\n')))
