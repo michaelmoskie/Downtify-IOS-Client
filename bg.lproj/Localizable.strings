@@ -461,3 +461,11 @@
 "Michael Moskie" = "Michael Moskie";
 "The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "Клиентите за iOS и Android са лицензирани под GNU GPL v3. Сървърът Downtify е лицензиран под GNU AGPL v3.";
 "iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";
+
+"Add another copy of existing tracks" = "Добавяне на още едно копие на съществуващите песни";
+"Remove All Copies" = "Премахване на всички копия";
+"Remove all copies of %@" = "Премахване на всички копия на %@";
+"Remove all copies of this track?" = "Да се премахнат ли всички копия на тази песен?";
+"Could not refresh the changed playlist. Refresh before saving again." = "Промененият плейлист не можа да се обнови. Обновете го преди повторно запазване.";
+"The server accepted the change, but its response could not be read. Refresh to see the result." = "Сървърът прие промяната, но отговорът му не можа да се прочете. Обновете, за да видите резултата.";
+"Refresh" = "Обновяване";

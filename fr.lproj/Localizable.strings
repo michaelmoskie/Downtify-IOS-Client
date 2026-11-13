@@ -461,3 +461,11 @@
 "Michael Moskie" = "Michael Moskie";
 "The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "Les clients iOS et Android sont sous licence GNU GPL v3. Le serveur Downtify est sous licence GNU AGPL v3.";
 "iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";
+
+"Add another copy of existing tracks" = "Ajouter une autre copie des morceaux existants";
+"Remove All Copies" = "Supprimer toutes les copies";
+"Remove all copies of %@" = "Supprimer toutes les copies de %@";
+"Remove all copies of this track?" = "Supprimer toutes les copies de ce morceau ?";
+"Could not refresh the changed playlist. Refresh before saving again." = "Impossible d’actualiser la playlist modifiée. Actualisez-la avant d’enregistrer à nouveau.";
+"The server accepted the change, but its response could not be read. Refresh to see the result." = "Le serveur a accepté la modification, mais sa réponse est illisible. Actualisez pour voir le résultat.";
+"Refresh" = "Actualiser";

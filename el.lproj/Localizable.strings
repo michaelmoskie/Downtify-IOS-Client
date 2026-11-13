@@ -461,3 +461,11 @@
 "Michael Moskie" = "Michael Moskie";
 "The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "Οι εφαρμογές iOS και Android διατίθενται με την άδεια GNU GPL v3. Ο διακομιστής Downtify διατίθεται με την άδεια GNU AGPL v3.";
 "iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";
+
+"Add another copy of existing tracks" = "Προσθήκη άλλου αντιγράφου των υπαρχόντων κομματιών";
+"Remove All Copies" = "Αφαίρεση όλων των αντιγράφων";
+"Remove all copies of %@" = "Αφαίρεση όλων των αντιγράφων του %@";
+"Remove all copies of this track?" = "Αφαίρεση όλων των αντιγράφων αυτού του κομματιού;";
+"Could not refresh the changed playlist. Refresh before saving again." = "Δεν ήταν δυνατή η ανανέωση της τροποποιημένης λίστας. Ανανεώστε πριν αποθηκεύσετε ξανά.";
+"The server accepted the change, but its response could not be read. Refresh to see the result." = "Ο διακομιστής δέχτηκε την αλλαγή, αλλά η απάντησή του δεν ήταν αναγνώσιμη. Ανανεώστε για να δείτε το αποτέλεσμα.";
+"Refresh" = "Ανανέωση";

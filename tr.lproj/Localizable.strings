@@ -461,3 +461,11 @@
 "Michael Moskie" = "Michael Moskie";
 "The iOS and Android clients are licensed under GNU GPL v3. The Downtify server is licensed under GNU AGPL v3." = "iOS ve Android istemcileri GNU GPL v3 lisansı altındadır. Downtify sunucusu GNU AGPL v3 lisansı altındadır.";
 "iOS client license (GPL-3.0)" = "iOS client license (GPL-3.0)";
+
+"Add another copy of existing tracks" = "Mevcut parçaların başka bir kopyasını ekle";
+"Remove All Copies" = "Tüm Kopyaları Kaldır";
+"Remove all copies of %@" = "%@ için tüm kopyaları kaldır";
+"Remove all copies of this track?" = "Bu parçanın tüm kopyaları kaldırılsın mı?";
+"Could not refresh the changed playlist. Refresh before saving again." = "Değişen çalma listesi yenilenemedi. Tekrar kaydetmeden önce yenileyin.";
+"The server accepted the change, but its response could not be read. Refresh to see the result." = "Sunucu değişikliği kabul etti ancak yanıtı okunamadı. Sonucu görmek için yenileyin.";
+"Refresh" = "Yenile";
