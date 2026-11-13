@@ -30,7 +30,9 @@ struct AppContainer {
         }
         library = repository
         let sessionUpdates: @Sendable () async throws -> AsyncStream<DeviceSession?> = { try await connection.sessionUpdates() }
-        let collections = LibraryCollectionsModel(database: database, sessionUpdates: sessionUpdates)
+        let collections = LibraryCollectionsModel(database: database, sessionUpdates: sessionUpdates) { session in
+            (try? await connection.verifySession(expected: session)) == .active
+        }
         self.collections = collections
         let presentation = LibraryPresentationModel(repository: repository, sessionUpdates: sessionUpdates)
         libraryPresentation = presentation

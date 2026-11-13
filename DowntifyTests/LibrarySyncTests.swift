@@ -4,6 +4,39 @@ import XCTest
 @testable import Downtify
 
 final class LibrarySyncTests: XCTestCase {
+    func testPendingActionsPersistInOrderAndAreIsolatedByPairing() async throws {
+        let (database, url) = try temporaryDatabase()
+        let scope = LibraryScope(serverID: "server", username: "Alice", deviceID: "one")
+        let otherAccount = LibraryScope(serverID: "server", username: "Bob", deviceID: "one")
+        let like = PendingCollectionAction(target: .like(trackID: "track"), desiredValue: true)
+        let unlike = PendingCollectionAction(target: .like(trackID: "track"), desiredValue: false)
+        let favorite = PendingCollectionAction(target: .favorite(name: "Mix", owner: "Alice", manual: true), desiredValue: true)
+        try await database.appendPendingAction(like, in: scope, deviceID: "one")
+        try await database.appendPendingAction(unlike, in: scope, deviceID: "one")
+        try await database.appendPendingAction(favorite, in: scope, deviceID: "two")
+
+        let reopened = LibraryDatabase(fileURL: url.appending(path: "library.sqlite"))
+        let saved = try await reopened.pendingActions(in: scope, deviceID: "one")
+        XCTAssertEqual(saved, [like, unlike])
+        let otherDevice = try await reopened.pendingActions(in: scope, deviceID: "two")
+        XCTAssertEqual(otherDevice, [favorite])
+        let otherUser = try await reopened.pendingActions(in: otherAccount, deviceID: "one")
+        XCTAssertTrue(otherUser.isEmpty)
+
+        var failed = like
+        failed.status = .failed
+        failed.failure = "Unavailable"
+        try await reopened.updatePendingAction(failed, in: scope, deviceID: "one")
+        try await reopened.removePendingAction(unlike.id, in: scope, deviceID: "one")
+        let updated = try await reopened.pendingActions(in: scope, deviceID: "one")
+        XCTAssertEqual(updated, [failed])
+        try await reopened.removePendingActions(in: scope, deviceID: "one")
+        let removed = try await reopened.pendingActions(in: scope, deviceID: "one")
+        let untouched = try await reopened.pendingActions(in: scope, deviceID: "two")
+        XCTAssertTrue(removed.isEmpty)
+        XCTAssertEqual(untouched, [favorite])
+    }
+
     func testInitialIncrementalRepeatedAndFullSync() async throws {
         let (database, _) = try temporaryDatabase()
         let session = testSession()

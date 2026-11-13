@@ -20,6 +20,7 @@ struct DowntifyApp: App {
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             container.librarySync.setActive(phase == .active)
+            container.collections.setActionsActive(phase == .active)
             if phase == .active {
                 container.offlineDownloads.observeSessions { try await container.connectionService.sessionUpdates() }
                 container.offlineDownloads.reconnect()

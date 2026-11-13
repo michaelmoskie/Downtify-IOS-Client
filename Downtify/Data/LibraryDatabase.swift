@@ -16,6 +16,36 @@ enum LibraryDatabaseError: Error, Equatable {
     case checkpointChanged
 }
 
+/// A durable user intent. Credentials are deliberately never persisted here.
+struct PendingCollectionAction: Codable, Equatable, Identifiable, Sendable {
+    enum Target: Codable, Equatable, Sendable {
+        case like(trackID: String)
+        case favorite(name: String, owner: String?, manual: Bool?)
+    }
+    enum Status: String, Codable, Sendable { case queued, sent, failed }
+
+    let id: UUID
+    let target: Target
+    let desiredValue: Bool
+    var attempts: Int
+    var nextAttempt: Date?
+    var status: Status
+    var failure: String?
+    // Optional for queues written by earlier app versions.
+    var requiresVerification: Bool?
+
+    init(target: Target, desiredValue: Bool) {
+        id = UUID()
+        self.target = target
+        self.desiredValue = desiredValue
+        attempts = 0
+        nextAttempt = nil
+        status = .queued
+        failure = nil
+        requiresVerification = nil
+    }
+}
+
 /// Each library write and its checkpoint share the same SQLite transaction.
 actor LibraryDatabase {
     private let fileURL: URL?
@@ -43,6 +73,76 @@ actor LibraryDatabase {
             try statement.bind(scope)
             try statement.bind(key, at: 3)
             try statement.bind(data, at: 4)
+            try statement.execute()
+        }
+    }
+
+    /// Actions are scoped to the pairing as well as the library account. Rows are
+    /// ordered by SQLite's durable sequence, so opposite taps are never coalesced.
+    func pendingActions(in scope: LibraryScope, deviceID: String) throws -> [PendingCollectionAction] {
+        try database().withStatement("""
+            SELECT payload FROM pending_collection_actions
+            WHERE server_id = ? AND account = ? AND device_id = ? ORDER BY sequence
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(deviceID, at: 3)
+            var actions: [PendingCollectionAction] = []
+            while try statement.next() {
+                guard let payload = statement.payload() else { throw LibraryDatabaseError.invalidStoredData }
+                do { actions.append(try JSONDecoder().decode(PendingCollectionAction.self, from: payload)) }
+                catch { throw LibraryDatabaseError.invalidStoredData }
+            }
+            return actions
+        }
+    }
+
+    func appendPendingAction(_ action: PendingCollectionAction, in scope: LibraryScope, deviceID: String) throws {
+        let payload = try JSONEncoder().encode(action)
+        try database().withStatement("""
+            INSERT INTO pending_collection_actions (server_id, account, device_id, action_id, payload)
+            VALUES (?, ?, ?, ?, ?)
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(deviceID, at: 3)
+            try statement.bind(action.id.uuidString, at: 4)
+            try statement.bind(payload, at: 5)
+            try statement.execute()
+        }
+    }
+
+    func updatePendingAction(_ action: PendingCollectionAction, in scope: LibraryScope, deviceID: String) throws {
+        let payload = try JSONEncoder().encode(action)
+        try database().withStatement("""
+            UPDATE pending_collection_actions SET payload = ?
+            WHERE server_id = ? AND account = ? AND device_id = ? AND action_id = ?
+            """) { statement in
+            try statement.bind(payload, at: 1)
+            try statement.bind(scope.serverID, at: 2)
+            try statement.bind(scope.account, at: 3)
+            try statement.bind(deviceID, at: 4)
+            try statement.bind(action.id.uuidString, at: 5)
+            try statement.execute()
+        }
+    }
+
+    func removePendingAction(_ id: UUID, in scope: LibraryScope, deviceID: String) throws {
+        try database().withStatement("""
+            DELETE FROM pending_collection_actions
+            WHERE server_id = ? AND account = ? AND device_id = ? AND action_id = ?
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(deviceID, at: 3)
+            try statement.bind(id.uuidString, at: 4)
+            try statement.execute()
+        }
+    }
+
+    func removePendingActions(in scope: LibraryScope, deviceID: String) throws {
+        try database().withStatement("""
+            DELETE FROM pending_collection_actions WHERE server_id = ? AND account = ? AND device_id = ?
+            """) { statement in
+            try statement.bind(scope)
+            try statement.bind(deviceID, at: 3)
             try statement.execute()
         }
     }
@@ -212,6 +312,18 @@ private final class SQLiteConnection {
             payload BLOB NOT NULL,
             PRIMARY KEY (server_id, account, kind)
         ) WITHOUT ROWID;
+        """,
+        """
+        CREATE TABLE pending_collection_actions (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            account TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            action_id TEXT NOT NULL UNIQUE,
+            payload BLOB NOT NULL
+        );
+        CREATE INDEX pending_collection_actions_scope
+            ON pending_collection_actions(server_id, account, device_id, sequence);
         """
     ]
 

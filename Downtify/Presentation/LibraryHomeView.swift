@@ -35,6 +35,16 @@ struct LibraryHomeView: View {
         var id: Self { self }
     }
 
+    private func actionDescription(_ action: PendingCollectionAction) -> LocalizedStringKey {
+        switch action.target {
+        case .like(let id):
+            let title = library.tracks.first(where: { $0.id == id })?.title ?? id
+            return action.desiredValue ? "Like song: \(title)" : "Unlike song: \(title)"
+        case .favorite(let name, _, _):
+            return action.desiredValue ? "Favorite playlist: \(name)" : "Unfavorite playlist: \(name)"
+        }
+    }
+
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
@@ -82,6 +92,29 @@ struct LibraryHomeView: View {
 
             NavigationStack {
                 Form {
+                    Section("Pending Actions") {
+                        if let error = collections.actionError {
+                            Text(error).foregroundStyle(.red)
+                            Button("Dismiss") { collections.clearError() }
+                        }
+                        if collections.pendingActions.isEmpty {
+                            Text("No actions yet").foregroundStyle(.secondary)
+                        }
+                        ForEach(collections.pendingActions) { action in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(actionDescription(action))
+                                switch action.status {
+                                case .queued: Text("Queued").foregroundStyle(.secondary)
+                                case .sent: Text("Sent").foregroundStyle(.secondary)
+                                case .failed:
+                                    Text(action.failure ?? String(localized: "Action failed")).foregroundStyle(.red)
+                                }
+                                if action.status != .queued {
+                                    Button("Dismiss") { Task { await collections.dismissAction(action.id) } }
+                                }
+                            }
+                        }
+                    }
                     Section("Diagnostics") {
                         Toggle("Network debug overlay", isOn: $networkOverlayEnabled)
                         Text("Shows active and waiting network work, playback queue depth, and offline transfer state.")
@@ -836,14 +869,21 @@ private struct LibraryContextView: View {
                 }
                 .accessibilityLabel("Shuffle songs")
             }
-            if let playlist, let favorite = playlist.favorite {
+            if let playlist, playlist.favorite != nil {
+                let favorite = collections.effectiveFavorite(playlist)
                 Button {
                     Task { await collections.toggleFavorite(playlist.name) }
                 } label: {
-                    Image(systemName: favorite ? "star.fill" : "star").downtifyControlTarget()
+                    HStack(spacing: 4) {
+                        Image(systemName: favorite ? "star.fill" : "star").downtifyControlTarget()
+                        if collections.hasPendingFavorite(playlist.name) {
+                            Text("Queued").font(.caption)
+                        }
+                    }
                 }
                 .disabled(collections.mutationBusy)
                 .accessibilityLabel(favorite ? "Remove playlist from favorites" : "Favorite playlist")
+                .accessibilityValue(collections.hasPendingFavorite(playlist.name) ? "Queued" : "")
             }
             if !tracks.isEmpty {
                 Menu {
@@ -1299,7 +1339,7 @@ private struct LibraryTrackList: View {
         LazyVStack(spacing: 0) {
             ForEach(tracks.indices, id: \.self) { index in
                 let track = tracks[index]
-                let liked = collections.likedSet.contains(track.id)
+                let liked = collections.effectiveLike(track.id)
                 HStack(spacing: 0) {
                     Button {
                         if let context { collections.record(context) }
@@ -1317,6 +1357,7 @@ private struct LibraryTrackList: View {
                                 Task { await collections.toggleLike(track) }
                             }
                             .disabled(collections.mutationBusy)
+                            if collections.hasPendingLike(track.id) { Text("Queued") }
                         }
                         Button("Add to queue", systemImage: "text.append") { playback.append([track]) }
                         if let onMoveToTrash {
@@ -1327,6 +1368,9 @@ private struct LibraryTrackList: View {
                         HStack(spacing: 0) {
                             if liked {
                                 Image(systemName: "heart.fill").font(.caption).foregroundStyle(DowntifyStyle.accent)
+                            }
+                            if collections.hasPendingLike(track.id) {
+                                Image(systemName: "clock").font(.caption).accessibilityLabel("Queued")
                             }
                             Image(systemName: "ellipsis")
                         }

@@ -52,13 +52,16 @@ extension URLSession: HTTPDataLoading {}
 struct APIClient {
     private let session: any HTTPDataLoading
     private let allowsInsecureRequests: Bool
+    private let preservesTransportErrors: Bool
 
     init(
         session: any HTTPDataLoading = URLSession.shared,
-        allowsInsecureRequests: Bool = false
+        allowsInsecureRequests: Bool = false,
+        preservesTransportErrors: Bool = false
     ) {
         self.session = session
         self.allowsInsecureRequests = allowsInsecureRequests
+        self.preservesTransportErrors = preservesTransportErrors
     }
 
     func serverInfo(at address: ServerAddress, allowsCellularAccess: Bool = true) async throws -> MobileAPIV1.ServerInfoDTO {
@@ -92,6 +95,16 @@ struct APIClient {
         try await load(request, address: address, isPublicServerInfo: false, allowsHTTPErrorResponses: true)
     }
 
+    private static func retryDelay(_ value: String) -> TimeInterval? {
+        if let seconds = TimeInterval(value), seconds.isFinite, seconds >= 0 { return seconds }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value) else { return nil }
+        return max(0, date.timeIntervalSinceNow)
+    }
+
     private func load(
         _ request: URLRequest,
         address: ServerAddress,
@@ -109,7 +122,7 @@ struct APIClient {
                 throw APIError.invalidResponse
             }
             guard allowsHTTPErrorResponses || (200..<300).contains(http.statusCode) else {
-                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Self.retryDelay)
                 await NetworkOperationCoordinator.shared.recordFailure("HTTP \(http.statusCode) · \(route)")
                 throw APIError.httpStatus(http.statusCode, retryAfter: retryAfter)
             }
@@ -122,6 +135,7 @@ struct APIClient {
             // Never include the request URL, headers, or underlying error in diagnostics.
             let route = diagnosticRoute(request)
             await NetworkOperationCoordinator.shared.recordFailure("Network transport failed · \(route)")
+            if preservesTransportErrors, let urlError = error as? URLError { throw urlError }
             throw APIError.transportFailure
         }
     }
