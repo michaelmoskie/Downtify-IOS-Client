@@ -175,6 +175,8 @@ final class LibraryCollectionsModel: ObservableObject {
 
     enum PlaylistMutationError: Equatable {
         case conflictRequiresReview
+        case conflictRefreshFailed
+        case acceptedResponseUnreadable
         case invalidRequest
         case permissionDenied
         case notFound
@@ -323,7 +325,7 @@ final class LibraryCollectionsModel: ObservableObject {
     }
 
     func createPlaylist(name: String) async {
-        await mutatePlaylist(.creating) { session in
+        _ = await mutatePlaylist(.creating) { session in
             try await api.createPlaylist(name: name, session: session)
         }
     }
@@ -332,21 +334,24 @@ final class LibraryCollectionsModel: ObservableObject {
         guard let session, !mutationBusy else { return }
         let request = generation
         let currentName = playlist(named: name)?.name ?? name
-        await mutatePlaylist(.renaming) { session in
+        let response = await mutatePlaylist(.renaming) { session in
             try await api.renamePlaylist(name: currentName, to: newName, session: session)
         }
-        guard request == generation, self.session == session, playlistMutationError == nil else { return }
+        guard request == generation, self.session == session, let response else { return }
+        let canonicalName = response.name
+        let previousName = response.previous ?? currentName
 
-        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == currentName }
+        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == previousName }
         for alias in aliases {
-            playlistNameAliases[alias] = newName
+            playlistNameAliases[alias] = canonicalName
         }
-        playlistNameAliases[currentName] = newName
-        if name != currentName { playlistNameAliases[name] = newName }
+        playlistNameAliases[previousName] = canonicalName
+        playlistNameAliases[currentName] = canonicalName
+        if name != currentName { playlistNameAliases[name] = canonicalName }
         recents = recents.map { context in
             guard case .playlist(let recentName) = context,
-                  recentName == currentName || recentName == name else { return context }
-            return .playlist(newName)
+                  recentName == previousName || recentName == currentName || recentName == name else { return context }
+            return .playlist(canonicalName)
         }
         let recentContexts = recents
         let prior = recentWrite
@@ -360,7 +365,7 @@ final class LibraryCollectionsModel: ObservableObject {
 
     func addTracks(_ trackIDs: [String], to name: String, allowDuplicates: Bool = false) async {
         guard !trackIDs.isEmpty else { return }
-        await mutatePlaylist(.addingTracks) { session in
+        _ = await mutatePlaylist(.addingTracks) { session in
             try await api.editPlaylistTracks(
                 name: name, add: trackIDs, remove: nil, removeEntries: nil,
                 allowDuplicates: allowDuplicates, session: session
@@ -371,7 +376,7 @@ final class LibraryCollectionsModel: ObservableObject {
     /// Removes every occurrence of each supplied track ID.
     func removeTracks(_ trackIDs: [String], from name: String) async {
         guard !trackIDs.isEmpty else { return }
-        await mutatePlaylist(.removingTracks) { session in
+        _ = await mutatePlaylist(.removingTracks) { session in
             try await api.editPlaylistTracks(
                 name: name, add: nil, remove: trackIDs, removeEntries: nil,
                 allowDuplicates: nil, session: session
@@ -386,7 +391,7 @@ final class LibraryCollectionsModel: ObservableObject {
             return
         }
         let entry = PlaylistTrackEditsRequestDTO.RemovalEntry(trackID: trackID, occurrence: occurrence)
-        await mutatePlaylist(.removingTrack) { session in
+        _ = await mutatePlaylist(.removingTrack) { session in
             try await api.editPlaylistTracks(
                 name: name, add: nil, remove: nil, removeEntries: [entry],
                 allowDuplicates: nil, session: session
@@ -402,40 +407,66 @@ final class LibraryCollectionsModel: ObservableObject {
             playlistMutationError = .invalidRequest
             return
         }
-        await mutatePlaylist(.reordering) { session in
+        _ = await mutatePlaylist(.reordering) { session in
             try await api.reorderPlaylist(name: name, trackIDs: trackIDs, session: session)
         }
     }
 
     private func mutatePlaylist(
         _ operation: PlaylistMutationOperation,
-        write: (DeviceSession) async throws -> Void
-    ) async {
-        guard let session, !mutationBusy else { return }
+        write: (DeviceSession) async throws -> PlaylistMutationResponseDTO
+    ) async -> PlaylistMutationResponseDTO? {
+        guard let session, !mutationBusy else { return nil }
         let request = generation
         mutationBusy = true
         activePlaylistMutation = operation
         playlistMutationError = nil
         actionError = nil
         await refreshTask?.value
-        guard request == generation else { return }
+        guard request == generation else { return nil }
+        var response: PlaylistMutationResponseDTO?
         do {
-            try await write(session)
+            response = try await write(session)
+            if let response, request == generation { applyPlaylistResponse(response) }
         } catch {
-            guard request == generation else { return }
+            guard request == generation else { return nil }
             if case APIError.httpStatus(let status, _) = error {
                 // A stale order must be reviewed against the refreshed authoritative list.
                 // Never resubmit the original sequence automatically.
                 playlistMutationError = status == 409 && operation == .reordering
                     ? .conflictRequiresReview : PlaylistMutationError.fromHTTPStatus(status)
+            } else if error is PlaylistWriteError {
+                playlistMutationError = .acceptedResponseUnreadable
             } else {
                 playlistMutationError = .unexpected
             }
         }
-        guard request == generation else { return }
+        guard request == generation else { return nil }
         mutationBusy = false
         activePlaylistMutation = nil
         await refresh(for: session)
+        if playlistMutationError == .conflictRequiresReview && playlistState != .ready {
+            playlistMutationError = .conflictRefreshFailed
+        }
+        return response
+    }
+
+    private func applyPlaylistResponse(_ response: PlaylistMutationResponseDTO) {
+        let oldName = response.previous ?? response.name
+        guard let index = playlists?.firstIndex(where: { $0.name == oldName || $0.name == response.name }),
+              let old = playlists?[index] else { return }
+        playlists?[index] = LibraryPlaylist(
+            name: response.name, displayName: oldName == response.name ? old.displayName : nil,
+            liked: old.liked, favorite: old.favorite, trackIDs: response.trackIDs, cover: old.cover,
+            owner: old.owner, mine: old.mine, manual: response.manual, canEditTracks: old.canEditTracks,
+            visibility: old.visibility, sharedWithMe: old.sharedWithMe, sharedWith: old.sharedWith, editors: old.editors
+        )
+    }
+
+    func refreshPlaylistAfterConflict() async {
+        let wasConflict = playlistMutationError == .conflictRefreshFailed
+        await refresh()
+        if playlistState == .ready { playlistMutationError = wasConflict ? .conflictRequiresReview : nil }
     }
 
     private func mutate(failure: LocalizedStringKey, write: (DeviceSession) async throws -> Void, apply: () -> Void) async {

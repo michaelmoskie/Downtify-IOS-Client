@@ -766,12 +766,12 @@ private struct LibraryContextView: View {
                         tracks: LibraryTrackOrdering.sorted(library.tracks),
                         selectedTrackIDs: $selectedTrackIDs,
                         isBusy: collections.mutationBusy
-                    ) {
+                    ) { allowDuplicates in
                         let ids = LibraryTrackOrdering.sorted(library.tracks)
                             .filter { selectedTrackIDs.contains($0.id) }
                             .map(\.id)
                         Task {
-                            await collections.addTracks(ids, to: playlist.name)
+                            await collections.addTracks(ids, to: playlist.name, allowDuplicates: allowDuplicates)
                             if collections.playlistMutationError == nil {
                                 playlistSheet = nil
                             }
@@ -790,6 +790,8 @@ private struct LibraryContextView: View {
                                 trackID: occurrence.trackID, occurrence: rank, from: playlist.name
                             )
                         }
+                    } onRemoveAll: { trackID in
+                        Task { await collections.removeTracks([trackID], from: playlist.name) }
                     }
                 case .reorder:
                     PlaylistReorderSheet(playlist: playlist, catalog: library.catalog,
@@ -960,13 +962,15 @@ private struct PlaylistTrackSelectionSheet: View {
     let tracks: [LibraryTrack]
     @Binding var selectedTrackIDs: Set<String>
     let isBusy: Bool
-    let onAdd: () -> Void
+    let onAdd: (Bool) -> Void
+    @State private var allowDuplicates = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 PlaylistMutationFeedbackRow()
+                Toggle("Add another copy of existing tracks", isOn: $allowDuplicates)
                 ForEach(tracks) { track in
                     Button {
                         if selectedTrackIDs.contains(track.id) {
@@ -996,7 +1000,7 @@ private struct PlaylistTrackSelectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { onAdd() }
+                    Button("Add") { onAdd(allowDuplicates) }
                         .disabled(selectedTrackIDs.isEmpty || isBusy)
                 }
             }
@@ -1101,6 +1105,8 @@ private struct PlaylistOccurrenceRemovalSheet: View {
     let catalog: LibraryCatalog
     let isBusy: Bool
     let onRemove: (PlaylistTrackOccurrence) -> Void
+    let onRemoveAll: (String) -> Void
+    @State private var removeAllTrackID: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1121,7 +1127,18 @@ private struct PlaylistOccurrenceRemovalSheet: View {
                         .disabled(isBusy)
                         .accessibilityLabel("Remove track occurrence")
                         .accessibilityValue(Text("Occurrence \(Int(row.occurrence.position + 1))"))
+                        Button("Remove All Copies", role: .destructive) { removeAllTrackID = row.occurrence.trackID }
+                            .disabled(isBusy)
+                            .accessibilityLabel("Remove all copies of \(row.track?.title ?? row.occurrence.trackID)")
                     }
+                }
+            }
+            .confirmationDialog("Remove all copies of this track?", isPresented: Binding(
+                get: { removeAllTrackID != nil }, set: { if !$0 { removeAllTrackID = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove All Copies", role: .destructive) {
+                    if let id = removeAllTrackID { onRemoveAll(id) }
+                    removeAllTrackID = nil
                 }
             }
             .navigationTitle("Remove Occurrence")
@@ -1169,7 +1186,13 @@ private struct PlaylistReorderSheet: View {
                     }
                     .disabled(isBusy || PlaylistTrackOccurrence.completeOrder(
                         occurrences, matching: playlist.trackIDs
-                    ) == nil || collections.playlistMutationError == .conflictRequiresReview)
+                    ) == nil || (collections.playlistMutationError == .conflictRequiresReview ||
+                          collections.playlistMutationError == .conflictRefreshFailed))
+                }
+            }
+            .onChange(of: collections.playlistMutationError) { _, error in
+                if error == .conflictRequiresReview {
+                    occurrences = PlaylistTrackOccurrence.ordered(playlist.trackIDs)
                 }
             }
             .onChange(of: playlist.trackIDs, initial: true) { _, trackIDs in
@@ -1202,7 +1225,10 @@ private struct PlaylistMutationFeedbackRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if error == .conflictRequiresReview {
+                if error == .conflictRefreshFailed || error == .acceptedResponseUnreadable {
+                    Button("Refresh") { Task { await collections.refreshPlaylistAfterConflict() } }
+                        .font(.caption)
+                } else if error == .conflictRequiresReview {
                     Button("Review Updated Order") { collections.clearPlaylistMutationError() }
                         .font(.caption)
                 } else {
@@ -1230,6 +1256,10 @@ private struct PlaylistMutationFeedbackRow: View {
         switch error {
         case .conflictRequiresReview:
             "This playlist changed on the server."
+        case .conflictRefreshFailed:
+            "Could not refresh the changed playlist. Refresh before saving again."
+        case .acceptedResponseUnreadable:
+            "The server accepted the change, but its response could not be read. Refresh to see the result."
         case .invalidRequest:
             "The server could not accept this change. Check the playlist and selected tracks."
         case .permissionDenied:

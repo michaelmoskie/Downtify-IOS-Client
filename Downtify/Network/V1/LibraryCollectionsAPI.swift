@@ -35,27 +35,29 @@ protocol LibraryCollectionsFetching {
     func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws
     func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws
-    func createPlaylist(name: String, session: DeviceSession) async throws
-    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws
+    func createPlaylist(name: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO
     func editPlaylistTracks(
         name: String, add: [String]?, remove: [String]?, removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?,
         allowDuplicates: Bool?, session: DeviceSession
-    ) async throws
-    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws
+    ) async throws -> PlaylistMutationResponseDTO
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws -> PlaylistMutationResponseDTO
 }
 
 extension LibraryCollectionsFetching {
     func supportsPlaylistEditing(for session: DeviceSession) async throws -> Bool { false }
 
     // Existing read-only/test implementations can keep conforming while mutation support is added.
-    func createPlaylist(name: String, session: DeviceSession) async throws { throw APIError.transportFailure }
-    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws { throw APIError.transportFailure }
+    func createPlaylist(name: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO { throw APIError.transportFailure }
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO { throw APIError.transportFailure }
     func editPlaylistTracks(
         name: String, add: [String]?, remove: [String]?, removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?,
         allowDuplicates: Bool?, session: DeviceSession
-    ) async throws { throw APIError.transportFailure }
-    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws { throw APIError.transportFailure }
+    ) async throws -> PlaylistMutationResponseDTO { throw APIError.transportFailure }
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws -> PlaylistMutationResponseDTO { throw APIError.transportFailure }
 }
+
+enum PlaylistWriteError: Error { case acceptedResponseUnreadable }
 
 struct LibraryCollectionsAPI: LibraryCollectionsFetching {
     private let transport: any HTTPDataLoading
@@ -93,35 +95,40 @@ struct LibraryCollectionsAPI: LibraryCollectionsFetching {
         _ = try await request("/api/v1/playlists/favorite", body: body, session: session)
     }
 
-    func createPlaylist(name: String, session: DeviceSession) async throws {
+    func createPlaylist(name: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         let body = try JSONEncoder().encode(PlaylistCreateRequestDTO(name: name))
-        _ = try await request("/api/v1/playlists", method: "POST", body: body, session: session)
+        return try decodeWrite(await request("/api/v1/playlists", method: "POST", body: body, session: session))
     }
 
-    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws {
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         let body = try JSONEncoder().encode(PlaylistRenameRequestDTO(name: name, newName: newName))
-        _ = try await request("/api/v1/playlists/rename", method: "POST", body: body, session: session)
+        return try decodeWrite(await request("/api/v1/playlists/rename", method: "POST", body: body, session: session))
     }
 
     func editPlaylistTracks(
         name: String, add: [String]? = nil, remove: [String]? = nil,
         removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]? = nil,
         allowDuplicates: Bool? = nil, session: DeviceSession
-    ) async throws {
+    ) async throws -> PlaylistMutationResponseDTO {
         let referenceCount = (add?.count ?? 0) + (remove?.count ?? 0) + (removeEntries?.count ?? 0)
         guard referenceCount <= 10_000 else { throw APIError.httpStatus(400, retryAfter: nil) }
         let requestBody = PlaylistTrackEditsRequestDTO(
             name: name, add: add, remove: remove, removeEntries: removeEntries, allowDuplicates: allowDuplicates
         )
-        _ = try await request(
+        return try decodeWrite(await request(
             "/api/v1/playlists/tracks", method: "POST", body: JSONEncoder().encode(requestBody), session: session
-        )
+        ))
     }
 
-    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws {
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         guard trackIDs.count <= 10_000 else { throw APIError.httpStatus(400, retryAfter: nil) }
         let body = try JSONEncoder().encode(PlaylistOrderRequestDTO(name: name, trackIDs: trackIDs))
-        _ = try await request("/api/v1/playlists/order", method: "PUT", body: body, session: session)
+        return try decodeWrite(await request("/api/v1/playlists/order", method: "PUT", body: body, session: session))
+    }
+
+    private func decodeWrite(_ data: Data) throws -> PlaylistMutationResponseDTO {
+        do { return try JSONDecoder().decode(PlaylistMutationResponseDTO.self, from: data) }
+        catch { throw PlaylistWriteError.acceptedResponseUnreadable }
     }
 
     private func read<T: Decodable>(_ type: T.Type, path: String, session: DeviceSession) async throws -> T {

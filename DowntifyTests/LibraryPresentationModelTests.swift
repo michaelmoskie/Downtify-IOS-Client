@@ -469,6 +469,31 @@ final class LibraryPresentationModelTests: XCTestCase {
         continuation.finish()
     }
 
+    func testCanonicalRenameAndFailedConflictRefresh() async throws {
+        let (database, folder) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let api = PlaylistMutationFeed(playlists: [playlist("Road", ids: ["a", "b"])])
+        let (updates, continuation) = AsyncStream<DeviceSession?>.makeStream()
+        let model = LibraryCollectionsModel(api: api, database: database, sessionUpdates: { updates })
+        model.start()
+        continuation.yield(makeSession())
+        await waitUntil { model.playlistState == .ready }
+        model.record(.playlist("Road"))
+        await api.setCanonicalRename("Canonical")
+        await model.renamePlaylist(name: "Road", to: " Requested ")
+        XCTAssertEqual(model.playlist(named: "Road")?.name, "Canonical")
+        XCTAssertEqual(model.recents, [.playlist("Canonical")])
+        await api.prepareConflict(with: playlist("Canonical", ids: ["a", "b", "c"]))
+        await api.setRefreshFailure(true)
+        await model.reorderPlaylist("Canonical", trackIDs: ["b", "a"])
+        XCTAssertEqual(model.playlistMutationError, .conflictRefreshFailed)
+        await api.setRefreshFailure(false)
+        await model.refreshPlaylistAfterConflict()
+        XCTAssertEqual(model.playlistMutationError, .conflictRequiresReview)
+        XCTAssertEqual(model.playlist(named: "Canonical")?.trackIDs, ["a", "b", "c"])
+        continuation.finish()
+    }
+
     func testRenameUpdatesRecentAndOpenPlaylistReferences() async throws {
         let (database, folder) = try makeDatabase()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -662,6 +687,8 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
     private let capabilities: [String: Bool]
     private var writes: [String] = []
     private var refreshCount = 0
+    private var failRefresh = false
+    private var canonicalRename: String?
     private var nextWriteStatus: Int?
     private var conflictPlaylists: [String: LibraryPlaylist] = [:]
     private var pausedCapabilityIDs: Set<String> = []
@@ -683,6 +710,7 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
 
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
         refreshCount += 1
+        if failRefresh { throw APIError.transportFailure }
         return playlistsByServer[session.serverID] ?? []
     }
 
@@ -698,22 +726,25 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
     func setLiked(_ liked: Bool, trackID: String, session: DeviceSession) async throws {}
     func setFavorite(_ favorite: Bool, name: String, session: DeviceSession) async throws {}
 
-    func createPlaylist(name: String, session: DeviceSession) async throws {
+    func createPlaylist(name: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("create:\(name)")
         try await pauseOrFail()
         playlistsByServer[session.serverID, default: []].append(playlist(name, ids: []))
+        return response(name, ids: [])
     }
 
-    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws {
+    func renamePlaylist(name: String, to newName: String, session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("rename:\(name):\(newName)")
         try await pauseOrFail()
-        replacePlaylist(named: name, with: newName, session: session)
+        let canonical = canonicalRename ?? newName
+        replacePlaylist(named: name, with: canonical, session: session)
+        return response(canonical, ids: playlistsByServer[session.serverID]?.first(where: { $0.name == canonical })?.trackIDs ?? [], previous: name)
     }
 
     func editPlaylistTracks(
         name: String, add: [String]?, remove: [String]?,
         removeEntries: [PlaylistTrackEditsRequestDTO.RemovalEntry]?, allowDuplicates: Bool?, session: DeviceSession
-    ) async throws {
+    ) async throws -> PlaylistMutationResponseDTO {
         let entries = removeEntries.map { $0.map { "\($0.trackID)@\($0.occurrence)" }.joined(separator: ",") } ?? "-"
         let additions = add.map { $0.joined(separator: ",") } ?? "-"
         let removals = remove.map { $0.joined(separator: ",") } ?? "-"
@@ -721,7 +752,7 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
         writes.append("edit:\(name):add=\(additions):remove=\(removals):remove_entries=\(entries):allow_duplicates=\(duplicateFlag)")
         try await pauseOrFail()
         guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }),
-              let current = playlistsByServer[session.serverID]?[index] else { return }
+              let current = playlistsByServer[session.serverID]?[index] else { throw APIError.httpStatus(404, retryAfter: nil) }
         var ids = current.trackIDs
         for id in add ?? [] where allowDuplicates == true || !ids.contains(id) { ids.append(id) }
         for id in remove ?? [] { ids.removeAll { $0 == id } }
@@ -730,9 +761,10 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
             if entry.occurrence < positions.count { ids.remove(at: positions[entry.occurrence]) }
         }
         playlistsByServer[session.serverID]?[index] = playlist(name, ids: ids)
+        return response(name, ids: ids)
     }
 
-    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws {
+    func reorderPlaylist(name: String, trackIDs: [String], session: DeviceSession) async throws -> PlaylistMutationResponseDTO {
         writes.append("reorder:\(name):\(trackIDs.joined(separator: ","))")
         try await pauseOrFail()
         if let conflict = conflictPlaylists.removeValue(forKey: session.serverID) {
@@ -741,10 +773,17 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
             }
             throw APIError.httpStatus(409, retryAfter: nil)
         }
-        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) else { return }
+        guard let index = playlistsByServer[session.serverID]?.firstIndex(where: { $0.name == name }) else { throw APIError.httpStatus(404, retryAfter: nil) }
         playlistsByServer[session.serverID]?[index] = playlist(name, ids: trackIDs)
+        return response(name, ids: trackIDs)
     }
 
+    private func response(_ name: String, ids: [String], previous: String? = nil) -> PlaylistMutationResponseDTO {
+        PlaylistMutationResponseDTO(name: name, manual: true, count: ids.count, trackIDs: ids, previous: previous, added: nil, removed: nil, already: nil)
+    }
+
+    func setRefreshFailure(_ fail: Bool) { failRefresh = fail }
+    func setCanonicalRename(_ name: String) { canonicalRename = name }
     func failNextWrite(status: Int) { nextWriteStatus = status }
     func prepareConflict(with playlist: LibraryPlaylist, serverID: String = "server") {
         conflictPlaylists[serverID] = playlist
