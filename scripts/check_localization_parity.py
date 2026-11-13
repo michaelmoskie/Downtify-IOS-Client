@@ -70,7 +70,7 @@ for language, keys in key_sets.items():
         errors.append(f"{language}: missing={sorted(reference-keys)}, extra={sorted(keys-reference)}")
 
 patterns = (
-    r'(?:Text|Button|Label|Section|Picker|LabeledContent|ProgressView|ContentUnavailableView)\(\s*"((?:[^"\\]|\\.)*)"',
+    r'(?:Text|Button|Label|Section|Picker|Toggle|LabeledContent|ProgressView|ContentUnavailableView)\(\s*"((?:[^"\\]|\\.)*)"',
     r'Link\(\s*"((?:[^"\\]|\\.)*)"',
     r'(?:navigationTitle|accessibilityLabel|accessibilityValue|accessibilityHint)\(\s*"((?:[^"\\]|\\.)*)"',
     r'String\(localized:\s*"((?:[^"\\]|\\.)*)"',
@@ -107,7 +107,7 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
             if key.startswith("Similar to \\("):
                 continue
             # Punctuation used to join localized Text fragments is not a standalone phrase.
-            if not any(char.isalnum() for char in key):
+            if key and not any(char.isalnum() for char in key):
                 continue
             if key in non_localized_case_values:
                 continue
