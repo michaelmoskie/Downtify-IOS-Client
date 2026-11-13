@@ -480,9 +480,13 @@ final class LibraryPresentationModelTests: XCTestCase {
         await waitUntil { model.playlistState == .ready }
         model.record(.playlist("Road"))
         await api.setCanonicalRename("Canonical")
-        await model.renamePlaylist(name: "Road", to: " Requested ")
+        await api.pauseNextRefresh()
+        let rename = Task { await model.renamePlaylist(name: "Road", to: " Requested ") }
+        await waitUntilAsync { await api.refreshIsWaiting() }
         XCTAssertEqual(model.playlist(named: "Road")?.name, "Canonical")
         XCTAssertEqual(model.recents, [.playlist("Canonical")])
+        await api.releaseRefresh()
+        await rename.value
         await api.prepareConflict(with: playlist("Canonical", ids: ["a", "b", "c"]))
         await api.setRefreshFailure(true)
         await model.reorderPlaylist("Canonical", trackIDs: ["b", "a"])
@@ -688,6 +692,9 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
     private var writes: [String] = []
     private var refreshCount = 0
     private var failRefresh = false
+    private var pauseRefresh = false
+    private var refreshWaiting = false
+    private var refreshContinuation: CheckedContinuation<Void, Never>?
     private var canonicalRename: String?
     private var nextWriteStatus: Int?
     private var conflictPlaylists: [String: LibraryPlaylist] = [:]
@@ -710,6 +717,12 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
 
     func playlists(for session: DeviceSession) async throws -> [LibraryPlaylist] {
         refreshCount += 1
+        if pauseRefresh {
+            pauseRefresh = false
+            refreshWaiting = true
+            await withCheckedContinuation { refreshContinuation = $0 }
+            refreshWaiting = false
+        }
         if failRefresh { throw APIError.transportFailure }
         return playlistsByServer[session.serverID] ?? []
     }
@@ -782,6 +795,9 @@ private actor PlaylistMutationFeed: LibraryCollectionsFetching {
         PlaylistMutationResponseDTO(name: name, manual: true, count: ids.count, trackIDs: ids, previous: previous, added: nil, removed: nil, already: nil)
     }
 
+    func pauseNextRefresh() { pauseRefresh = true }
+    func refreshIsWaiting() -> Bool { refreshWaiting }
+    func releaseRefresh() { refreshContinuation?.resume(); refreshContinuation = nil }
     func setRefreshFailure(_ fail: Bool) { failRefresh = fail }
     func setCanonicalRename(_ name: String) { canonicalRename = name }
     func failNextWrite(status: Int) { nextWriteStatus = status }

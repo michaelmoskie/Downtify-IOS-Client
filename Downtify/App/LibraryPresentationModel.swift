@@ -331,36 +331,10 @@ final class LibraryCollectionsModel: ObservableObject {
     }
 
     func renamePlaylist(name: String, to newName: String) async {
-        guard let session, !mutationBusy else { return }
-        let request = generation
         let currentName = playlist(named: name)?.name ?? name
-        let response = await mutatePlaylist(.renaming) { session in
+        _ = await mutatePlaylist(.renaming) { session in
             try await api.renamePlaylist(name: currentName, to: newName, session: session)
         }
-        guard request == generation, self.session == session, let response else { return }
-        let canonicalName = response.name
-        let previousName = response.previous ?? currentName
-
-        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == previousName }
-        for alias in aliases {
-            playlistNameAliases[alias] = canonicalName
-        }
-        playlistNameAliases[previousName] = canonicalName
-        playlistNameAliases[currentName] = canonicalName
-        if name != currentName { playlistNameAliases[name] = canonicalName }
-        recents = recents.map { context in
-            guard case .playlist(let recentName) = context,
-                  recentName == previousName || recentName == currentName || recentName == name else { return context }
-            return .playlist(canonicalName)
-        }
-        let recentContexts = recents
-        let prior = recentWrite
-        let write = Task {
-            await prior?.value
-            await save(recentContexts, key: "recents", session: session)
-        }
-        recentWrite = write
-        await write.value
     }
 
     func addTracks(_ trackIDs: [String], to name: String, allowDuplicates: Bool = false) async {
@@ -427,7 +401,12 @@ final class LibraryCollectionsModel: ObservableObject {
         var response: PlaylistMutationResponseDTO?
         do {
             response = try await write(session)
-            if let response, request == generation { applyPlaylistResponse(response) }
+            if let response, request == generation {
+                applyPlaylistResponse(response)
+                if operation == .renaming, let previous = response.previous {
+                    applyPlaylistRename(from: previous, to: response.name, session: session)
+                }
+            }
         } catch {
             guard request == generation else { return nil }
             if case APIError.httpStatus(let status, _) = error {
@@ -449,6 +428,23 @@ final class LibraryCollectionsModel: ObservableObject {
             playlistMutationError = .conflictRefreshFailed
         }
         return response
+    }
+
+    private func applyPlaylistRename(from previous: String, to canonicalName: String, session: DeviceSession) {
+        let aliases = playlistNameAliases.keys.filter { playlistNameAliases[$0] == previous }
+        for alias in aliases { playlistNameAliases[alias] = canonicalName }
+        playlistNameAliases[previous] = canonicalName
+        recents = recents.map { context in
+            guard case .playlist(let recentName) = context, recentName == previous else { return context }
+            return .playlist(canonicalName)
+        }
+        let recentContexts = recents
+        let prior = recentWrite
+        let write = Task {
+            await prior?.value
+            await save(recentContexts, key: "recents", session: session)
+        }
+        recentWrite = write
     }
 
     private func applyPlaylistResponse(_ response: PlaylistMutationResponseDTO) {

@@ -1125,7 +1125,7 @@ private struct PlaylistOccurrenceRemovalSheet: View {
                             onRemove(row.occurrence)
                         }
                         .disabled(isBusy)
-                        .accessibilityLabel("Remove track occurrence")
+                        .accessibilityLabel(Text(row.track?.title ?? row.occurrence.trackID) + Text(", ") + Text("Remove track occurrence"))
                         .accessibilityValue(Text("Occurrence \(Int(row.occurrence.position + 1))"))
                         Button("Remove All Copies", role: .destructive) { removeAllTrackID = row.occurrence.trackID }
                             .disabled(isBusy)
@@ -1170,6 +1170,8 @@ private struct PlaylistReorderSheet: View {
                         Text(catalog.tracksByID[occurrence.trackID]?.artist ?? occurrence.trackID)
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityValue(Text("Occurrence \(Int((occurrences.firstIndex(of: occurrence) ?? 0) + 1))"))
                 }
                 .onMove { source, destination in occurrences.move(fromOffsets: source, toOffset: destination) }
             }
