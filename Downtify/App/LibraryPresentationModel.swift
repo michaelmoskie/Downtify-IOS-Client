@@ -382,7 +382,7 @@ final class LibraryCollectionsModel: ObservableObject {
                 self.startActionDrain()
             } catch {
                 guard self.generation == request else { return }
-                self.actionError = "Could not save this action. Please try again."
+                self.actionError = String(localized: "Could not save this action. Please try again.")
             }
         }
         enqueueTask = task
@@ -396,7 +396,7 @@ final class LibraryCollectionsModel: ObservableObject {
             try await database.removePendingAction(id, in: scope(session), deviceID: session.deviceID)
             guard request == generation else { return }
             pendingActions.removeAll { $0.id == id }
-        } catch { actionError = "Could not remove this action. Please try again." }
+        } catch { actionError = String(localized: "Could not remove this action. Please try again.") }
     }
 
     func setActionsPathAvailable(_ available: Bool) {
@@ -439,7 +439,7 @@ final class LibraryCollectionsModel: ObservableObject {
                 action.requiresVerification = false
                 if action.attempts >= 5 {
                     action.status = .failed
-                    action.failure = "Server returned HTTP 401."
+                    action.failure = String(localized: "Server returned HTTP \(Int(401)).")
                     action.nextAttempt = nil
                 }
                 do {
@@ -447,7 +447,7 @@ final class LibraryCollectionsModel: ObservableObject {
                     guard request == generation, !Task.isCancelled else { return }
                     replacePendingAction(action)
                 } catch {
-                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    actionError = String(localized: "Could not save the action’s status. Delivery has stopped.")
                     return
                 }
                 continue
@@ -478,7 +478,7 @@ final class LibraryCollectionsModel: ObservableObject {
                     try await database.updatePendingAction(action, in: scope(session), deviceID: session.deviceID)
                 } catch {
                     guard request == generation else { return }
-                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    actionError = String(localized: "Could not save the action’s status. Delivery has stopped.")
                     return
                 }
                 guard request == generation, !Task.isCancelled else { return }
@@ -515,7 +515,7 @@ final class LibraryCollectionsModel: ObservableObject {
                     guard request == generation, !Task.isCancelled else { return }
                     replacePendingAction(action)
                 } catch {
-                    actionError = "Could not save the action’s status. Delivery has stopped."
+                    actionError = String(localized: "Could not save the action’s status. Delivery has stopped.")
                     return
                 }
             }
@@ -541,9 +541,11 @@ final class LibraryCollectionsModel: ObservableObject {
     }
 
     private func failureMessage(for error: Error) -> String {
-        if error is PendingActionFailure { return "The playlist changed or is no longer available. Choose it again." }
-        if case APIError.httpStatus(let status, _) = error { return "Server returned HTTP \(status)." }
-        return "The action could not be sent. Choose the item and try again."
+        if error is PendingActionFailure {
+            return String(localized: "The playlist changed or is no longer available. Choose it again.")
+        }
+        if case APIError.httpStatus(let status, _) = error { return String(localized: "Server returned HTTP \(status).") }
+        return String(localized: "The action could not be sent. Choose the item and try again.")
     }
 
     private func replacePendingAction(_ action: PendingCollectionAction) {
@@ -740,7 +742,7 @@ final class LibraryCollectionsModel: ObservableObject {
         playlistState = .loading
         likesState = .loading
         mutationBusy = false
-        actionError = discardFailed ? "Could not clear pending actions for the previous session." : nil
+        actionError = discardFailed ? String(localized: "Could not clear pending actions for the previous session.") : nil
         supportsPlaylistEditing = false
         activePlaylistMutation = nil
         playlistMutationError = nil
@@ -752,7 +754,7 @@ final class LibraryCollectionsModel: ObservableObject {
             guard request == generation else { return }
             pendingActions = try await database.pendingActions(in: scope(newSession), deviceID: newSession.deviceID)
         } catch {
-            actionError = "Could not load pending actions. Delivery has stopped."
+            actionError = String(localized: "Could not load pending actions. Delivery has stopped.")
             return
         }
         guard request == generation else { return }

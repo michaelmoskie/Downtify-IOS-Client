@@ -107,7 +107,7 @@ struct LibraryHomeView: View {
                                 case .queued: Text("Queued").foregroundStyle(.secondary)
                                 case .sent: Text("Sent").foregroundStyle(.secondary)
                                 case .failed:
-                                    Text(action.failure ?? "Action failed").foregroundStyle(.red)
+                                    Text(action.failure ?? String(localized: "Action failed")).foregroundStyle(.red)
                                 }
                                 if action.status != .queued {
                                     Button("Dismiss") { Task { await collections.dismissAction(action.id) } }
