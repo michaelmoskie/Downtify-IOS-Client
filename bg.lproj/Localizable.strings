@@ -484,3 +484,4 @@
 "The playlist changed or is no longer available. Choose it again." = "Плейлистът е променен или вече не е наличен. Изберете го отново.";
 "Unlike song: %@" = "Премахване на харесването на песента: %@";
 "Unfavorite playlist: %@" = "Премахване на плейлиста от любими: %@";
+"Pending Actions" = "Чакащи действия";

@@ -484,3 +484,4 @@
 "The playlist changed or is no longer available. Choose it again." = "A lejátszási lista megváltozott vagy már nem érhető el. Válaszd ki újra.";
 "Unlike song: %@" = "Dal kedvelésének visszavonása: %@";
 "Unfavorite playlist: %@" = "Lejátszási lista eltávolítása a kedvencek közül: %@";
+"Pending Actions" = "Függőben lévő műveletek";
