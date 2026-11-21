@@ -146,6 +146,10 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
     if source.endswith(("/Presentation/CatalogSearchView.swift", "/Presentation/CatalogDiscoverView.swift")):
         for key in re.findall(r'TextField\(\s*"((?:[^"\\]|\\.)*)"', content):
             source_keys.add(format_localization_key(key))
+    if source.endswith(("/Presentation/NowPlayingDetailViews.swift", "/App/NowPlayingDetailModel.swift")):
+        # Section titles and catalog notes are passed as keys or shown through LocalizedStringKey(message).
+        for key in re.findall(r'\b(?:message|title):\s*"((?:[^"\\]|\\.)*)"', content):
+            source_keys.add(format_localization_key(key))
 source_keys.update({"System", "Light", "Dark", "OLED black"})
 source_keys.update({"Could not reach the server."})
 source_keys.update({"Queue %@ · %lld active", "Working on %@"})

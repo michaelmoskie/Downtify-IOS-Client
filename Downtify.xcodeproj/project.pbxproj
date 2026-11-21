@@ -5,6 +5,16 @@
 	};
 	objectVersion = 56;
 	objects = {
+		000000000000000000000A08 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingDetailViews.swift; sourceTree = "<group>"; };
+		000000000000000000000A09 = { isa = PBXBuildFile; fileRef = 000000000000000000000A08; };
+		000000000000000000000A06 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingDetailModelTests.swift; sourceTree = "<group>"; };
+		000000000000000000000A07 = { isa = PBXBuildFile; fileRef = 000000000000000000000A06; };
+		000000000000000000000A04 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingDetailModel.swift; sourceTree = "<group>"; };
+		000000000000000000000A05 = { isa = PBXBuildFile; fileRef = 000000000000000000000A04; };
+		000000000000000000000A02 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingNavigationTests.swift; sourceTree = "<group>"; };
+		000000000000000000000A03 = { isa = PBXBuildFile; fileRef = 000000000000000000000A02; };
+		000000000000000000000A00 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingNavigation.swift; sourceTree = "<group>"; };
+		000000000000000000000A01 = { isa = PBXBuildFile; fileRef = 000000000000000000000A00; };
 		0000000000000000000000C0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDockScrollTests.swift; sourceTree = "<group>"; };
 		0000000000000000000000C1 = { isa = PBXBuildFile; fileRef = 0000000000000000000000C0; };
 		000000000000000000000098 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPresentationModel.swift; sourceTree = "<group>"; };
@@ -410,6 +420,7 @@
 		000000000000000000000043 = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000A00,
 				000000000000000000000035,
 				00000000000000000000006D,
 				000000000000000000000094,
@@ -442,6 +453,7 @@
 		00000000000000000000000B = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000A04,
 				0000000000000000000000A0,
 				000000000000000000000098,
 				000000000000000000000001,
@@ -459,6 +471,7 @@
 		00000000000000000000000C = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000A08,
 				000000000000000000000005,
 				0000000000000000000000A2,
 				000000000000000000000200,
@@ -520,6 +533,8 @@
 		000000000000000000000010 = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000A06,
+				000000000000000000000A02,
 				000000000000000000000069,
 				000000000000000000000206,
 				000000000000000000000202,
@@ -583,6 +598,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000A09,
+				000000000000000000000A05,
+				000000000000000000000A01,
 				0000000000000000000000A1,
 				000000000000000000000301,
 				000000000000000000000305,
@@ -691,6 +709,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000A07,
+				000000000000000000000A03,
 				00000000000000000000006A,
 				000000000000000000000207,
 				000000000000000000000203,

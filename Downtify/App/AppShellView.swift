@@ -99,6 +99,9 @@ struct TrackRow: View {
 /// Lives at the navigation boundary so playback updates do not invalidate library rows.
 struct PlaybackDock: View {
     @ObservedObject var playback: PlaybackController
+    /// Passed through to Now Playing's artist and album pages; not observed here.
+    let library: LibraryPresentationModel
+    let serverDownloads: ServerDownloadPresentationModel
     @Environment(\.downtifyPalette) private var palette
     @State private var showingNowPlaying = false
 
@@ -115,7 +118,7 @@ struct PlaybackDock: View {
             }
         }
         .sheet(isPresented: $showingNowPlaying) {
-            NowPlayingView(playback: playback)
+            NowPlayingView(playback: playback, library: library, serverDownloads: serverDownloads)
                 .presentationDragIndicator(.visible)
         }
     }
@@ -210,6 +213,10 @@ extension EnvironmentValues {
 
 private struct NowPlayingView: View {
     @ObservedObject var playback: PlaybackController
+    let library: LibraryPresentationModel
+    let serverDownloads: ServerDownloadPresentationModel
+    @State private var path: [NowPlayingRoute] = []
+    @State private var artistChoices: [NowPlayingArtistTarget] = []
     @AppStorage("debug.networkOverlay.enabled") private var networkOverlayEnabled = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -231,7 +238,7 @@ private struct NowPlayingView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack(alignment: .topTrailing) {
             ScrollView {
                 let layout = usesWideLayout
@@ -289,6 +296,31 @@ private struct NowPlayingView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .navigationDestination(for: NowPlayingRoute.self) { route in
+                Group {
+                    switch route {
+                    case .artist(let target):
+                        NowPlayingArtistPage(target: target, library: library, playback: playback,
+                                             serverDownloads: serverDownloads)
+                    case .album(let target):
+                        NowPlayingAlbumPage(target: target, library: library, playback: playback,
+                                            serverDownloads: serverDownloads)
+                    }
+                }
+                .toolbarBackground(palette.background, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+            }
+            .confirmationDialog("Go to artist", isPresented: Binding(get: { !artistChoices.isEmpty },
+                                                                     set: { if !$0 { artistChoices = [] } }),
+                                titleVisibility: .visible) {
+                ForEach(artistChoices, id: \.self) { target in
+                    Button(target.name) { path.append(.artist(target)) }
+                }
+            }
         }
         .sheet(isPresented: $showingQueue) {
             PlaybackQueueSheet(playback: playback)
@@ -297,24 +329,87 @@ private struct NowPlayingView: View {
         .task(id: track?.id) { await loadLyrics() }
     }
 
+    @ViewBuilder
     private var trackMetadata: some View {
-        VStack(spacing: 5) {
-            Text(playback.podcast?.episode.title ?? item?.displayTitle ?? String(localized: "Unknown title"))
-                .font(.title2.weight(.bold))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                .accessibilityAddTraits(.isHeader)
-            Text(playback.podcast?.show.name ?? item?.displayArtist ?? String(localized: "Unknown artist"))
-                .font(.title3)
-                .foregroundStyle(DowntifyStyle.secondaryText)
-            if let album = playback.podcast == nil ? item?.album : playback.podcast?.show.author, !album.isEmpty {
-                Text(album)
-                    .font(.subheadline)
+        if playback.podcast == nil, let item {
+            musicMetadata(item)
+        } else {
+            VStack(spacing: 5) {
+                Text(playback.podcast?.episode.title ?? item?.displayTitle ?? String(localized: "Unknown title"))
+                    .font(.title2.weight(.bold))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .accessibilityAddTraits(.isHeader)
+                Text(playback.podcast?.show.name ?? item?.displayArtist ?? String(localized: "Unknown artist"))
+                    .font(.title3)
                     .foregroundStyle(DowntifyStyle.secondaryText)
+                if let album = playback.podcast?.show.author, !album.isEmpty {
+                    Text(album)
+                        .font(.subheadline)
+                        .foregroundStyle(DowntifyStyle.secondaryText)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// Title and album open the album page, the artist opens the artist page.
+    /// Targets resolve at tap time so this sheet never observes the library.
+    private func musicMetadata(_ item: PlaybackItem) -> some View {
+        let hasAlbum = !item.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasArtist = !item.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || item.artists.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return VStack(spacing: 5) {
+            Button { openAlbum(item) } label: {
+                Text(item.displayTitle)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            }
+            .disabled(!hasAlbum)
+            .accessibilityLabel(item.displayTitle)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityHint(hasAlbum ? "Opens the album page" : "")
+            .accessibilityIdentifier("player.title")
+            Button { openArtist(item) } label: {
+                Text(item.displayArtist)
+                    .font(.title3)
+                    .foregroundStyle(hasArtist ? DowntifyStyle.accent : DowntifyStyle.secondaryText)
+            }
+            .disabled(!hasArtist)
+            .accessibilityLabel("Artist, \(item.displayArtist)")
+            .accessibilityHint(hasArtist ? "Opens the artist page" : "")
+            .accessibilityIdentifier("player.artist")
+            if hasAlbum {
+                Button { openAlbum(item) } label: {
+                    Text(item.album)
+                        .font(.subheadline)
+                        .foregroundStyle(DowntifyStyle.secondaryText)
+                        .underline()
+                }
+                .accessibilityLabel("Album, \(item.album)")
+                .accessibilityHint("Opens the album page")
+                .accessibilityIdentifier("player.album")
             }
         }
+        .buttonStyle(.plain)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .combine)
+    }
+
+    private func openAlbum(_ item: PlaybackItem) {
+        guard let target = NowPlayingNavigationResolver.albumTarget(for: item, catalog: library.catalog) else { return }
+        path.append(.album(target))
+    }
+
+    private func openArtist(_ item: PlaybackItem) {
+        let targets = NowPlayingNavigationResolver.artistTargets(for: item, catalog: library.catalog)
+        if targets.count == 1 {
+            path.append(.artist(targets[0]))
+        } else if targets.count > 1 {
+            artistChoices = targets
+        }
     }
 
     private var transportControls: some View {

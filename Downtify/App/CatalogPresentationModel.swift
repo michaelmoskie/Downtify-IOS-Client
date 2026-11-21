@@ -550,14 +550,19 @@ final class CatalogPresentationModel: ObservableObject {
         mutationState = .idle
     }
 
-    private func isUnavailable(_ error: Error) -> Bool {
+    private func isUnavailable(_ error: Error) -> Bool { Self.isUnavailable(error) }
+
+    private func message(for error: Error) -> String { Self.message(for: error) }
+
+    /// Shared with per-page catalog loaders so they report errors the same way.
+    nonisolated static func isUnavailable(_ error: Error) -> Bool {
         if let error = error as? CatalogAPIError {
             return error == .featureUnavailable || error == .libraryOnly
         }
         return false
     }
 
-    private func message(for error: Error) -> String {
+    nonisolated static func message(for error: Error) -> String {
         if let error = error as? CatalogAPIError {
             switch error {
             case .invalidInput: "This request is not valid."

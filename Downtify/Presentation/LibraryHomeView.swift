@@ -53,35 +53,35 @@ struct LibraryHomeView: View {
             NavigationStack {
                 browsePage(title: "Home") { homeContent }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
             .tabItem { Label("Home", systemImage: "house") }.tag(Tab.home)
 
             NavigationStack {
                 browsePage(title: "Library") { libraryContent }
                     .searchable(text: $searchText, prompt: "Filter your library")
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
             .tabItem { Label("Library", systemImage: "books.vertical").accessibilityIdentifier("tab.library") }.tag(Tab.library)
 
             NavigationStack {
                 browsePage(title: "Search") { searchContent }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
             .tabItem { Label("Search", systemImage: "magnifyingglass").accessibilityIdentifier("tab.search") }.tag(Tab.search)
 
             NavigationStack {
                 browsePage(title: "Discover") { discoveryContent }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
             .tabItem { Label("Discover", systemImage: "sparkles") }.tag(Tab.discover)
 
             DownloadsView(connection: connection, queue: serverDownloadQueue, serverDownloads: serverDownloads,
                           playback: playback, membership: library.membership)
-                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
                 .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }.tag(Tab.downloads)
 
             PodcastsView(connection: connection, playback: playback)
-                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
                 .tabItem { Label("Podcasts", systemImage: "mic") }.tag(Tab.podcasts)
 
             if server.role?.lowercased() == "admin" {
@@ -89,7 +89,7 @@ struct LibraryHomeView: View {
                     AdminTrashView(connection: connection, role: server.role,
                                    pairingID: "\(server.serverID):\(server.deviceID):\(server.username ?? ""):\(server.role ?? "")")
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
                 .tabItem { Label("Trash", systemImage: "trash") }.tag(Tab.adminTrash)
             }
 
@@ -126,7 +126,7 @@ struct LibraryHomeView: View {
                 }
                 .navigationTitle("More")
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { PlaybackDock(playback: playback, library: library, serverDownloads: serverDownloads) }
             .tabItem { Label("More", systemImage: "ellipsis").accessibilityIdentifier("tab.more") }.tag(Tab.more)
         }
         .onChange(of: networkOperationLimit) { _, value in
