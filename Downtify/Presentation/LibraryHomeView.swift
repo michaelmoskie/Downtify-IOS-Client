@@ -326,7 +326,7 @@ struct LibraryHomeView: View {
                 Button { grid.toggle() } label: {
                     Image(systemName: grid ? "list.bullet" : "square.grid.2x2").downtifyControlTarget()
                 }
-                .accessibilityLabel(grid ? "Show as list" : "Show as grid")
+                .accessibilityLabel(grid ? String(localized: "Show as list") : String(localized: "Show as grid"))
             }
         }
         switch category {
@@ -988,8 +988,8 @@ private struct LibraryContextView: View {
                     }
                 }
                 .disabled(collections.mutationBusy)
-                .accessibilityLabel(favorite ? "Remove playlist from favorites" : "Favorite playlist")
-                .accessibilityValue(collections.hasPendingFavorite(playlist.name) ? "Queued" : "")
+                .accessibilityLabel(favorite ? String(localized: "Remove playlist from favorites") : String(localized: "Favorite playlist"))
+                .accessibilityValue(collections.hasPendingFavorite(playlist.name) ? String(localized: "Queued") : "")
             }
             if !tracks.isEmpty {
                 Menu {
@@ -1028,7 +1028,7 @@ private struct LibraryContextView: View {
         }
         let hasCache = context == .liked ? collections.likedIDs != nil : playlist != nil
         if collectionState == .unavailable {
-            Label(hasCache ? "Showing saved collection. Refresh failed." : "Collection unavailable.",
+            Label(hasCache ? String(localized: "Showing saved collection. Refresh failed.") : String(localized: "Collection unavailable."),
                   systemImage: "exclamationmark.arrow.triangle.2.circlepath")
             Button("Retry") { Task { await collections.refresh() } }
         } else if collectionState == .loading && !hasCache {

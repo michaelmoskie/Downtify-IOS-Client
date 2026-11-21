@@ -583,3 +583,25 @@
 "Lyrics are unavailable for this track." = "Bu parça için şarkı sözü yok.";
 "Current queue entry" = "Kuyruktaki geçerli öğe";
 "Play this queue entry" = "Kuyruktaki bu öğeyi oynat";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Yerel ağda aranıyor…";
+"Find servers on this network" = "Bu ağdaki sunucuları bul";
+"Wait %llds" = "%lld sn bekleyin";
+"Sign in" = "Giriş yap";
+"Pair device" = "Cihazı eşleştir";
+"Trash is empty" = "Çöp kutusu boş";
+"No expired songs" = "Süresi dolmuş şarkı yok";
+"Songs moved to trash will appear here." = "Çöp kutusuna taşınan şarkılar burada görünür.";
+"Expired songs that automatic downloads still skip appear here." = "Otomatik indirmelerin hâlâ atladığı süresi dolmuş şarkılar burada görünür.";
+"In trash · %lld" = "Çöp kutusunda · %lld";
+"Expired · %lld" = "Süresi dolmuş · %lld";
+"Select %@" = "%@ öğesini seç";
+"Deselect %@" = "%@ seçimini kaldır";
+"Show as list" = "Liste olarak göster";
+"Show as grid" = "Izgara olarak göster";
+"Remove playlist from favorites" = "Çalma listesini favorilerden çıkar";
+"Favorite playlist" = "Çalma listesini favorilere ekle";
+"Showing saved collection. Refresh failed." = "Kayıtlı koleksiyon gösteriliyor. Yenileme başarısız oldu.";
+"Collection unavailable." = "Koleksiyon kullanılamıyor.";
+"Play episode" = "Bölümü oynat";

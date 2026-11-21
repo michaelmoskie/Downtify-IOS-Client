@@ -583,3 +583,25 @@
 "Lyrics are unavailable for this track." = "Δεν υπάρχουν στίχοι για αυτό το τραγούδι.";
 "Current queue entry" = "Τρέχον στοιχείο ουράς";
 "Play this queue entry" = "Αναπαραγωγή αυτού του στοιχείου";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Αναζήτηση στο τοπικό δίκτυο…";
+"Find servers on this network" = "Εύρεση διακομιστών σε αυτό το δίκτυο";
+"Wait %llds" = "Περιμένετε %lld δ";
+"Sign in" = "Σύνδεση";
+"Pair device" = "Σύζευξη συσκευής";
+"Trash is empty" = "Ο κάδος είναι άδειος";
+"No expired songs" = "Δεν υπάρχουν τραγούδια που έληξαν";
+"Songs moved to trash will appear here." = "Τα τραγούδια που μετακινούνται στον κάδο θα εμφανίζονται εδώ.";
+"Expired songs that automatic downloads still skip appear here." = "Εδώ εμφανίζονται τραγούδια που έληξαν και οι αυτόματες λήψεις εξακολουθούν να παραλείπουν.";
+"In trash · %lld" = "Στον κάδο · %lld";
+"Expired · %lld" = "Έληξαν · %lld";
+"Select %@" = "Επιλογή %@";
+"Deselect %@" = "Αποεπιλογή %@";
+"Show as list" = "Εμφάνιση ως λίστα";
+"Show as grid" = "Εμφάνιση ως πλέγμα";
+"Remove playlist from favorites" = "Αφαίρεση λίστας από τα αγαπημένα";
+"Favorite playlist" = "Προσθήκη λίστας στα αγαπημένα";
+"Showing saved collection. Refresh failed." = "Εμφανίζεται η αποθηκευμένη συλλογή. Η ανανέωση απέτυχε.";
+"Collection unavailable." = "Η συλλογή δεν είναι διαθέσιμη.";
+"Play episode" = "Αναπαραγωγή επεισοδίου";

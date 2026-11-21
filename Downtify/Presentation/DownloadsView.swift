@@ -237,7 +237,7 @@ struct DownloadsView: View {
                                     .font(.title3)
                             }
                             .disabled(!canRequest(rowState(song)))
-                            .accessibilityLabel(selectedCatalogSongs.contains(song.id) ? "Deselect \(song.title)" : "Select \(song.title)")
+                            .accessibilityLabel(selectedCatalogSongs.contains(song.id) ? String(localized: "Deselect \(song.title)") : String(localized: "Select \(song.title)"))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(song.title).font(.subheadline.weight(.medium)).lineLimit(2)
                                 Text(song.artists.joined(separator: ", ")).font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
@@ -432,12 +432,12 @@ struct AdminTrashView: View {
                             ContentUnavailableView("Could not load music trash", systemImage: "exclamationmark.triangle", description: Text(alert.message))
                             Button("Try again") { Task { await reload() } }
                         } else if visibleItems.isEmpty {
-                            ContentUnavailableView(tab == .trash ? "Trash is empty" : "No expired songs", systemImage: tab == .trash ? "trash" : "checkmark.circle", description: Text(tab == .trash ? "Songs moved to trash will appear here." : "Expired songs that automatic downloads still skip appear here."))
+                            ContentUnavailableView(tab == .trash ? String(localized: "Trash is empty") : String(localized: "No expired songs"), systemImage: tab == .trash ? "trash" : "checkmark.circle", description: Text(tab == .trash ? String(localized: "Songs moved to trash will appear here.") : String(localized: "Expired songs that automatic downloads still skip appear here.")))
                         } else {
                             ForEach(visibleItems) { item in itemRow(item) }
                         }
                     } header: {
-                        Text(tab == .trash ? "In trash · \(totalItems)" : "Expired · \(exclusions.count)")
+                        Text(tab == .trash ? String(localized: "In trash · \(Int(totalItems))") : String(localized: "Expired · \(Int(exclusions.count))"))
                     } footer: {
                         if let days = capability?.retentionDays, tab == .trash {
                             Text("Songs are retained for up to \(days) days. The server performs file moves in the background.")

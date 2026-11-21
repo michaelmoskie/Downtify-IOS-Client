@@ -110,7 +110,7 @@ struct FoundationView: View {
                 }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.address.isEmpty)
 
                 Button { model.startDiscovery() } label: {
-                    Label(model.isDiscovering ? "Searching local network…" : "Find servers on this network", systemImage: "dot.radiowaves.left.and.right")
+                    Label(model.isDiscovering ? String(localized: "Searching local network…") : String(localized: "Find servers on this network"), systemImage: "dot.radiowaves.left.and.right")
                 }.disabled(model.isWorking)
                 Button { showingScanner = true } label: {
                     Label("Scan pairing QR code", systemImage: "qrcode.viewfinder")
@@ -146,11 +146,11 @@ struct FoundationView: View {
                         Text("Sign in with password").font(.subheadline.weight(.semibold))
                         TextField("Username", text: $model.username).textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
                         SecureField("Password", text: $model.password).textFieldStyle(.roundedBorder)
-                        Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Sign in") { model.signIn() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.username.isEmpty || model.password.isEmpty).accessibilityIdentifier("connect.signInButton")
+                        Button(model.cooldownSeconds > 0 ? String(localized: "Wait \(model.cooldownSeconds)s") : String(localized: "Sign in")) { model.signIn() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.username.isEmpty || model.password.isEmpty).accessibilityIdentifier("connect.signInButton")
                     }
                     Text("Pairing code").font(.subheadline.weight(.semibold))
                     TextField("Enter code", text: $model.pairingCode).textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
-                    Button(model.cooldownSeconds > 0 ? "Wait \(model.cooldownSeconds)s" : "Pair device") { model.pair() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.pairingCode.isEmpty)
+                    Button(model.cooldownSeconds > 0 ? String(localized: "Wait \(model.cooldownSeconds)s") : String(localized: "Pair device")) { model.pair() }.buttonStyle(.borderedProminent).foregroundStyle(DowntifyStyle.onAccent).disabled(model.isWorking || model.cooldownSeconds > 0 || model.pairingCode.isEmpty)
                     if model.cooldownSeconds > 0 {
                         Text("Sign-in is paused for this server. Try again in \(model.cooldownSeconds) seconds.")
                             .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)

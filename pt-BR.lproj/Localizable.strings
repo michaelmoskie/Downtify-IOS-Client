@@ -583,3 +583,25 @@
 "Lyrics are unavailable for this track." = "A letra não está disponível para esta música.";
 "Current queue entry" = "Item atual da fila";
 "Play this queue entry" = "Reproduzir este item da fila";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Buscando na rede local…";
+"Find servers on this network" = "Encontrar servidores nesta rede";
+"Wait %llds" = "Aguarde %lld s";
+"Sign in" = "Entrar";
+"Pair device" = "Parear dispositivo";
+"Trash is empty" = "A lixeira está vazia";
+"No expired songs" = "Nenhuma música expirada";
+"Songs moved to trash will appear here." = "As músicas movidas para a lixeira aparecerão aqui.";
+"Expired songs that automatic downloads still skip appear here." = "As músicas expiradas que os downloads automáticos ainda ignoram aparecem aqui.";
+"In trash · %lld" = "Na lixeira · %lld";
+"Expired · %lld" = "Expiradas · %lld";
+"Select %@" = "Selecionar %@";
+"Deselect %@" = "Desmarcar %@";
+"Show as list" = "Mostrar em lista";
+"Show as grid" = "Mostrar em grade";
+"Remove playlist from favorites" = "Remover playlist dos favoritos";
+"Favorite playlist" = "Adicionar playlist aos favoritos";
+"Showing saved collection. Refresh failed." = "Mostrando a coleção salva. Falha ao atualizar.";
+"Collection unavailable." = "Coleção indisponível.";
+"Play episode" = "Reproduzir episódio";
