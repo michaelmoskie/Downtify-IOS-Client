@@ -583,3 +583,25 @@
 "Lyrics are unavailable for this track." = "Ehhez a dalhoz nem érhető el dalszöveg.";
 "Current queue entry" = "Aktuális elem a sorban";
 "Play this queue entry" = "Elem lejátszása a sorból";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Keresés a helyi hálózaton…";
+"Find servers on this network" = "Szerverek keresése ezen a hálózaton";
+"Wait %llds" = "Várjon %lld mp-et";
+"Sign in" = "Bejelentkezés";
+"Pair device" = "Eszköz párosítása";
+"Trash is empty" = "A lomtár üres";
+"No expired songs" = "Nincsenek lejárt dalok";
+"Songs moved to trash will appear here." = "A lomtárba helyezett dalok itt jelennek meg.";
+"Expired songs that automatic downloads still skip appear here." = "Itt jelennek meg a lejárt dalok, amelyeket az automatikus letöltések továbbra is kihagynak.";
+"In trash · %lld" = "Lomtárban · %lld";
+"Expired · %lld" = "Lejárt · %lld";
+"Select %@" = "%@ kijelölése";
+"Deselect %@" = "%@ kijelölésének megszüntetése";
+"Show as list" = "Megjelenítés listaként";
+"Show as grid" = "Megjelenítés rácsként";
+"Remove playlist from favorites" = "Lejátszási lista eltávolítása a kedvencek közül";
+"Favorite playlist" = "Lejátszási lista hozzáadása a kedvencekhez";
+"Showing saved collection. Refresh failed." = "A mentett gyűjtemény látható. A frissítés sikertelen.";
+"Collection unavailable." = "A gyűjtemény nem érhető el.";
+"Play episode" = "Epizód lejátszása";

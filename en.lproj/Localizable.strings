@@ -581,3 +581,25 @@
 "Lyrics are unavailable for this track." = "Lyrics are unavailable for this track.";
 "Current queue entry" = "Current queue entry";
 "Play this queue entry" = "Play this queue entry";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Searching local network…";
+"Find servers on this network" = "Find servers on this network";
+"Wait %llds" = "Wait %llds";
+"Sign in" = "Sign in";
+"Pair device" = "Pair device";
+"Trash is empty" = "Trash is empty";
+"No expired songs" = "No expired songs";
+"Songs moved to trash will appear here." = "Songs moved to trash will appear here.";
+"Expired songs that automatic downloads still skip appear here." = "Expired songs that automatic downloads still skip appear here.";
+"In trash · %lld" = "In trash · %lld";
+"Expired · %lld" = "Expired · %lld";
+"Select %@" = "Select %@";
+"Deselect %@" = "Deselect %@";
+"Show as list" = "Show as list";
+"Show as grid" = "Show as grid";
+"Remove playlist from favorites" = "Remove playlist from favorites";
+"Favorite playlist" = "Favorite playlist";
+"Showing saved collection. Refresh failed." = "Showing saved collection. Refresh failed.";
+"Collection unavailable." = "Collection unavailable.";
+"Play episode" = "Play episode";

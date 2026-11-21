@@ -226,7 +226,7 @@ private struct PodcastEpisodeView: View {
                     }
                 }
                 if episode.isDownloaded || episode.publisherAudioURL != nil {
-                    Button(isPlaying ? "Pause" : "Play episode", systemImage: isPlaying ? "pause.fill" : "play.fill") {
+                    Button(isPlaying ? String(localized: "Pause") : String(localized: "Play episode"), systemImage: isPlaying ? "pause.fill" : "play.fill") {
                         if isPlaying { playback.pause() }
                         else { playback.playEpisode(episode, from: show, session: session) }
                     }

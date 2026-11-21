@@ -583,3 +583,25 @@
 "Lyrics are unavailable for this track." = "Няма текст за тази песен.";
 "Current queue entry" = "Текущ елемент от опашката";
 "Play this queue entry" = "Възпроизвеждане на този елемент";
+
+/* Conditional labels outside Now Playing */
+"Searching local network…" = "Търсене в локалната мрежа…";
+"Find servers on this network" = "Намиране на сървъри в тази мрежа";
+"Wait %llds" = "Изчакайте %lld с";
+"Sign in" = "Вход";
+"Pair device" = "Сдвояване на устройството";
+"Trash is empty" = "Кошчето е празно";
+"No expired songs" = "Няма изтекли песни";
+"Songs moved to trash will appear here." = "Песните, преместени в кошчето, ще се показват тук.";
+"Expired songs that automatic downloads still skip appear here." = "Тук се показват изтекли песни, които автоматичните изтегляния все още пропускат.";
+"In trash · %lld" = "В кошчето · %lld";
+"Expired · %lld" = "Изтекли · %lld";
+"Select %@" = "Избиране на %@";
+"Deselect %@" = "Премахване на избора на %@";
+"Show as list" = "Показване като списък";
+"Show as grid" = "Показване като мрежа";
+"Remove playlist from favorites" = "Премахване на плейлиста от любими";
+"Favorite playlist" = "Добавяне на плейлиста към любими";
+"Showing saved collection. Refresh failed." = "Показва се запазената колекция. Опресняването не бе успешно.";
+"Collection unavailable." = "Колекцията не е достъпна.";
+"Play episode" = "Възпроизвеждане на епизода";

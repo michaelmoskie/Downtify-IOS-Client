@@ -109,10 +109,20 @@ patterns = (
     r'case\s+\.\w+\s*\([^)]*\)\s*:\s*"((?:[^"\\]|\\.)*)"',
     r'case\s+(?:\.\w+(?:,\s*)?)+:\s*"((?:[^"\\]|\\.)*)"',
 )
+# A ternary of two string literals is typed as `String`, so SwiftUI shows it verbatim and the
+# patterns above never see it. Require `cond ? String(localized: "A") : String(localized: "B")`.
+literal_ternary_pattern = re.compile(
+    r'\b(?:Text|Button|Label|Section|Picker|Toggle|LabeledContent|ProgressView|ContentUnavailableView|Link'
+    r'|navigationTitle|accessibilityLabel|accessibilityValue|accessibilityHint)'
+    r'\(\s*[^"\n,:]*?(?<!\?)\?\s*"(?:[^"\\]|\\.)*"\s*:\s*"'
+)
 non_localized_case_values = {"music.mic", "opticaldisc", "music.note.list", "heart.fill"}
 source_keys = set()
 for source in glob.glob("Downtify/**/*.swift", recursive=True):
     content = Path(source).read_text()
+    for match in literal_ternary_pattern.finditer(content):
+        line = content.count("\n", 0, match.start()) + 1
+        errors.append(f"{source}:{line}: unlocalized string-literal ternary; wrap each branch in String(localized:)")
     for pattern in patterns:
         for key in re.findall(pattern, content):
             # Skip regex fragments that terminate inside a nested Swift interpolation.
