@@ -22,7 +22,7 @@ jobs:
         include:
           - family: iPhone
             ios: '18.5'
-            xcode: '16.4'
+            xcode: '26.2'
           - family: iPad
             ios: '26.2'
             xcode: '26.2'
