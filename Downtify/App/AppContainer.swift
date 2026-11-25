@@ -54,6 +54,7 @@ struct AppContainer {
     let serverDownloads: ServerDownloadPresentationModel
     let dataReset: AppDataReset
     let storageSettings: StorageSettingsModel
+    let reachability: ServerReachabilityModel
     #if DEBUG
     let harness: DebugHarness?
     #endif
@@ -101,6 +102,7 @@ struct AppContainer {
             offlineDownloads = .live
         }
         offlineDownloads.verifySession = verifyPlaybackSession
+        artworkLoader.savedCovers = offlineDownloads
         let serverDownloadQueue = ServerDownloadQueue(verifySession: verifyPlaybackSession)
         self.serverDownloadQueue = serverDownloadQueue
         let serverDownloads = ServerDownloadPresentationModel(queue: serverDownloadQueue, sessionUpdates: sessionUpdates)
@@ -154,6 +156,12 @@ struct AppContainer {
             networkFailures: NetworkOperationCoordinator.shared
         )
         storageSettings = StorageSettingsModel(reset: dataReset)
+        let transport = environment.transport
+        reachability = ServerReachabilityModel(sessionUpdates: sessionUpdates) { session in
+            await NetworkOperationContext.$priority.withValue(.userFacing) {
+                (try? await LibraryAPIClient(transport: transport).verifiedAddress(for: session)) != nil
+            }
+        }
         #if DEBUG
         harness = DebugHarness.current
         if let harness {

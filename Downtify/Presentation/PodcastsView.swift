@@ -7,16 +7,19 @@ struct PodcastsView: View {
     @State private var session: DeviceSession?
     @State private var connectionFailed = false
     @State private var navigationID = UUID()
+    /// False when pushed onto an existing navigation stack (the profile drawer in the redesigned layout).
+    var embedsNavigationStack = true
+    @Environment(\.downtifyPalette) private var palette
 
     var body: some View {
-        NavigationStack {
-            if let session {
-                PodcastShowsList(api: api, session: session, connection: connection, playback: playback)
-            } else if connectionFailed {
-                ContentUnavailableView("Podcasts unavailable", systemImage: "mic.slash",
-                                       description: Text("Could not read the saved server connection."))
+        Group {
+            if embedsNavigationStack {
+                NavigationStack { content }
             } else {
-                ProgressView("Checking connection…")
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(palette.background.ignoresSafeArea())
+                    .navigationTitle("Podcasts")
             }
         }
         .id(navigationID)
@@ -31,6 +34,18 @@ struct PodcastsView: View {
             } catch {
                 connectionFailed = true
             }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let session {
+            PodcastShowsList(api: api, session: session, connection: connection, playback: playback)
+        } else if connectionFailed {
+            ContentUnavailableView("Podcasts unavailable", systemImage: "mic.slash",
+                                   description: Text("Could not read the saved server connection."))
+        } else {
+            ProgressView("Checking connection…")
         }
     }
 }

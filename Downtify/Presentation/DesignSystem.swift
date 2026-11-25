@@ -167,9 +167,10 @@ struct DowntifyTheme: Codable, Equatable {
 }
 
 /// Derives a subdued tint from actual artwork. Missing or unavailable artwork uses the theme surface.
+/// Picks a background color from cover art that keeps white text readable.
 enum ArtworkThemeTint {
     static func color(from image: UIImage) -> Color? {
-        guard let cgImage = image.cgImage else { return nil }
+        guard let cgImage = image.cgImage, cgImage.width >= 8, cgImage.height >= 8 else { return nil }
         let side = 12
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
         let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
@@ -182,16 +183,38 @@ enum ArtworkThemeTint {
             return true
         }
         guard drawn else { return nil }
-        var red = 0.0, green = 0.0, blue = 0.0
+        // Group colorful pixels into 12 hue buckets and take the heaviest bucket, so a busy cover yields
+        // one of its real colors instead of a muddy average. Grey or black covers fall back to the average.
+        var buckets = [(weight: Double, red: Double, green: Double, blue: Double)](repeating: (0, 0, 0, 0), count: 12)
+        var red = 0.0, green = 0.0, blue = 0.0, total = 0.0
         for index in stride(from: 0, to: pixels.count, by: 4) {
-            red += Double(pixels[index]); green += Double(pixels[index + 1]); blue += Double(pixels[index + 2])
+            let r = Double(pixels[index]) / 255, g = Double(pixels[index + 1]) / 255, b = Double(pixels[index + 2]) / 255
+            red += r; green += g; blue += b; total += 1
+            var h: CGFloat = 0, sat: CGFloat = 0, value: CGFloat = 0, a: CGFloat = 0
+            UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &sat, brightness: &value, alpha: &a)
+            guard sat > 0.3, value > 0.2 else { continue }
+            // Skin tones (orange hues at moderate saturation) are left out so portraits tint by their palette.
+            if h < 0.11, sat < 0.62, value > 0.35 { continue }
+            // Squared saturation favours vivid colours over skin tones and washed-out backgrounds.
+            let weight = Double(sat * sat * value)
+            let bucket = min(Int(h * 12), 11)
+            buckets[bucket].weight += weight
+            buckets[bucket].red += r * weight
+            buckets[bucket].green += g * weight
+            buckets[bucket].blue += b * weight
         }
-        let count = Double(side * side) * 255
-        let base = UIColor(red: red / count, green: green / count, blue: blue / count, alpha: 1)
+        guard total > 0 else { return nil }
+        let base: UIColor
+        if let best = buckets.max(by: { $0.weight < $1.weight }), best.weight > 0.15 {
+            base = UIColor(red: best.red / best.weight, green: best.green / best.weight, blue: best.blue / best.weight, alpha: 1)
+        } else {
+            base = UIColor(red: red / total, green: green / total, blue: blue / total, alpha: 1)
+        }
         var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
         guard base.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else { return nil }
-        return Color(uiColor: UIColor(hue: hue, saturation: min(saturation, 0.75),
-                                      brightness: min(max(brightness, 0.25), 0.5), alpha: 1))
+        let adjustedSaturation = saturation < 0.08 ? saturation : min(max(saturation, 0.35), 0.75)
+        return Color(uiColor: UIColor(hue: hue, saturation: adjustedSaturation,
+                                      brightness: min(max(brightness, 0.34), 0.52), alpha: 1))
     }
 }
 

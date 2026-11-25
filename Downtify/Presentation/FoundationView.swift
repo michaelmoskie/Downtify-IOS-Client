@@ -28,12 +28,18 @@ struct FoundationView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.openURL) private var openURL
     @State private var showingScanner = false
+    @State private var usesPairingCode = false
+    @FocusState private var focusedField: Field?
 
     private var contentWidth: CGFloat {
         horizontalSizeClass == .regular ? 560 : 440
     }
 
     var body: some View {
+        if palette.redesign("connection") { redesignBody } else { standardBody }
+    }
+
+    private var standardBody: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .center, spacing: DowntifyStyle.Space.section) {
@@ -57,8 +63,8 @@ struct FoundationView: View {
             Image(systemName: "waveform")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(palette.onBrand)
-                .frame(width: palette.redesign("connection") ? 64 : 48, height: palette.redesign("connection") ? 64 : 48)
-                .background(palette.brand.gradient, in: RoundedRectangle(cornerRadius: palette.redesign("connection") ? 24 : 15, style: .continuous))
+                .frame(width: 48, height: 48)
+                .background(palette.brand.gradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                 .accessibilityHidden(true)
 
             Text(name)
@@ -168,6 +174,306 @@ struct FoundationView: View {
         }
         .accessibilityElement(children: .contain)
     }
+
+    // MARK: Redesigned sign in
+
+    private enum Field { case address, username, password, code }
+
+    private var redesignContentWidth: CGFloat {
+        horizontalSizeClass == .regular ? 480 : 440
+    }
+
+    /// Two steps on a green-tinted page: the server address, then password or pairing code.
+    private var redesignBody: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .center, spacing: 28) {
+                    redesignBrand
+                    redesignWelcome
+                    if let recoverableError { recoverableErrorCard(recoverableError) }
+                    if let target = model.target {
+                        signInStep(target)
+                    } else {
+                        serverStep
+                    }
+                }
+                .frame(maxWidth: redesignContentWidth)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, DowntifyStyle.Space.large)
+                .padding(.vertical, DowntifyStyle.Space.section)
+                .frame(minHeight: geometry.size.height, alignment: .center)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(alignment: .top) {
+                LinearGradient(colors: [Color(red: 0.1, green: 0.42, blue: 0.24).opacity(0.75), palette.background],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 420)
+                    .ignoresSafeArea(edges: .top)
+            }
+            .background(palette.background.ignoresSafeArea())
+        }
+        .tint(palette.accent)
+        .sheet(isPresented: $showingScanner) {
+            PairingCodeScanner { value in
+                showingScanner = false
+                model.acceptPairingPayload(value)
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var redesignBrand: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "waveform")
+                .font(.system(size: 38, weight: .bold))
+                .foregroundStyle(palette.onBrand)
+                .frame(width: 84, height: 84)
+                .background(palette.brand, in: Circle())
+                .shadow(color: palette.brand.opacity(0.35), radius: 24, y: 8)
+                .accessibilityHidden(true)
+            Text(name)
+                .font(.title3.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
+        }
+    }
+
+    private var redesignWelcome: some View {
+        VStack(alignment: .center, spacing: DowntifyStyle.Space.small) {
+            Text("Your music,\nyour server.")
+                .font(.system(.largeTitle, weight: .heavy))
+                .tracking(-0.6)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+
+            Text("Connect to your Downtify server to explore and play your library.")
+                .font(.body)
+                .foregroundStyle(DowntifyStyle.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    private func recoverableErrorCard(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Label { Text(message).fixedSize(horizontal: false, vertical: true) } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(.subheadline)
+            .foregroundStyle(DowntifyStyle.error)
+            Button("Try again") { retryAction?() }
+                .buttonStyle(DowntifyPillButtonStyle(prominent: false))
+        }
+        .padding(DowntifyStyle.Space.regular)
+        .background(DowntifyStyle.error.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: Step 1: find the server
+
+    private var serverStep: some View {
+        VStack(spacing: 14) {
+            inputField(icon: "server.rack") {
+                TextField("", text: $model.address,
+                          prompt: Text(verbatim: "https://music.example.com").foregroundStyle(DowntifyStyle.secondaryText))
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .submitLabel(.go)
+                    .focused($focusedField, equals: .address)
+                    .onSubmit { if !model.address.isEmpty { model.probeAddress() } }
+                    .accessibilityIdentifier("connect.serverField")
+                    .accessibilityLabel("Server address")
+            }
+            Button { focusedField = nil; model.probeAddress() } label: {
+                if model.isWorking { ProgressView().tint(.black).accessibilityLabel("Connecting to server") }
+                else { Text("Connect to server") }
+            }
+            .buttonStyle(DowntifyPillButtonStyle(prominent: true))
+            .disabled(model.isWorking || model.address.isEmpty)
+
+            if let error = model.error { errorText(error) }
+
+            HStack(spacing: 12) {
+                Rectangle().fill(DowntifyStyle.secondaryText.opacity(0.3)).frame(height: 1)
+                Text("or").font(.footnote.weight(.semibold)).foregroundStyle(DowntifyStyle.secondaryText)
+                Rectangle().fill(DowntifyStyle.secondaryText.opacity(0.3)).frame(height: 1)
+            }
+            .padding(.vertical, 4)
+            .accessibilityHidden(true)
+
+            Button { model.startDiscovery() } label: {
+                Label(model.isDiscovering ? String(localized: "Searching local network…") : String(localized: "Find servers on this network"),
+                      systemImage: "dot.radiowaves.left.and.right")
+            }
+            .buttonStyle(DowntifyPillButtonStyle(prominent: false))
+            .disabled(model.isWorking)
+            Button { showingScanner = true } label: {
+                Label("Scan pairing QR code", systemImage: "qrcode.viewfinder")
+            }
+            .buttonStyle(DowntifyPillButtonStyle(prominent: false))
+            .disabled(model.isWorking)
+
+            if !model.servers.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(model.servers, id: \.address.baseURL.absoluteString) { server in
+                        Button { model.probe(server) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "server.rack")
+                                    .foregroundStyle(palette.accent)
+                                    .frame(width: 40, height: 40)
+                                    .background(palette.brand.opacity(0.15), in: Circle())
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(server.name).font(.body.weight(.semibold))
+                                    Text(server.address.baseURL.absoluteString).font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.footnote.weight(.bold)).foregroundStyle(DowntifyStyle.secondaryText)
+                            }
+                            .padding(12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(palette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            if let message = model.discoveryMessage {
+                VStack(spacing: 8) {
+                    Text(message).font(.caption).foregroundStyle(DowntifyStyle.secondaryText).multilineTextAlignment(.center)
+                    if model.needsPermissionRecovery {
+                        Button("Open Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
+                            .buttonStyle(DowntifyPillButtonStyle(prominent: false))
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Step 2: sign in or pair
+
+    private func signInStep(_ target: ConnectionFlowModel.ServerPresentation) -> some View {
+        let pairing = usesPairingCode || !target.supportsPasswordSignIn
+        return VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(palette.onBrand)
+                    .frame(width: 40, height: 40)
+                    .background(palette.brand, in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(target.name).font(.headline)
+                    Text(target.address).font(.caption).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button("Change") { model.changeServer() }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .disabled(model.isWorking)
+                    .accessibilityLabel("Change server")
+            }
+            .padding(12)
+            .background(palette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .contain)
+
+            if target.supportsPasswordSignIn {
+                HStack(spacing: 8) {
+                    DowntifyChip(title: "Password", isSelected: !pairing) { usesPairingCode = false }
+                    DowntifyChip(title: "Pairing code", isSelected: pairing) { usesPairingCode = true }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if pairing {
+                inputField(icon: "key.fill") {
+                    TextField("Enter code", text: $model.pairingCode)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .focused($focusedField, equals: .code)
+                }
+                Button(model.cooldownSeconds > 0 ? String(localized: "Wait \(model.cooldownSeconds)s") : String(localized: "Pair device")) {
+                    focusedField = nil
+                    model.pair()
+                }
+                .buttonStyle(DowntifyPillButtonStyle(prominent: true))
+                .disabled(model.isWorking || model.cooldownSeconds > 0 || model.pairingCode.isEmpty || (target.usesInsecureHTTP && !model.consentToInsecureHTTP))
+                Button { showingScanner = true } label: {
+                    Label("Scan pairing QR code", systemImage: "qrcode.viewfinder")
+                }
+                .buttonStyle(DowntifyPillButtonStyle(prominent: false))
+                .disabled(model.isWorking)
+            } else {
+                inputField(icon: "person.fill") {
+                    TextField("Username", text: $model.username)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .textContentType(.username)
+                        .submitLabel(.next)
+                        .focused($focusedField, equals: .username)
+                        .onSubmit { focusedField = .password }
+                }
+                inputField(icon: "lock.fill") {
+                    SecureField("Password", text: $model.password)
+                        .textContentType(.password)
+                        .submitLabel(.go)
+                        .focused($focusedField, equals: .password)
+                        .onSubmit { if !model.username.isEmpty && !model.password.isEmpty { model.signIn() } }
+                }
+                Button {
+                    focusedField = nil
+                    model.signIn()
+                } label: {
+                    if model.isWorking { ProgressView().tint(.black) }
+                    else { Text(model.cooldownSeconds > 0 ? String(localized: "Wait \(model.cooldownSeconds)s") : String(localized: "Sign in")) }
+                }
+                .buttonStyle(DowntifyPillButtonStyle(prominent: true))
+                .disabled(model.isWorking || model.cooldownSeconds > 0 || model.username.isEmpty || model.password.isEmpty || (target.usesInsecureHTTP && !model.consentToInsecureHTTP))
+                .accessibilityIdentifier("connect.signInButton")
+            }
+
+            if model.cooldownSeconds > 0 {
+                Text("Sign-in is paused for this server. Try again in \(model.cooldownSeconds) seconds.")
+                    .font(.caption).foregroundStyle(DowntifyStyle.secondaryText).multilineTextAlignment(.center)
+            }
+            if let error = model.error { errorText(error) }
+
+            if target.usesInsecureHTTP {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("This server uses unencrypted HTTP", systemImage: "lock.slash.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(DowntifyStyle.error)
+                    Text("Your password, pairing code, and access token could be read by others on the network.")
+                        .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("I understand and want to continue", isOn: $model.consentToInsecureHTTP)
+                        .font(.caption)
+                        .tint(palette.brand)
+                }
+                .padding(DowntifyStyle.Space.regular)
+                .background(DowntifyStyle.error.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func inputField<Content: View>(icon: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(DowntifyStyle.secondaryText)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            content()
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .background(palette.elevated, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func errorText(_ message: String) -> some View {
+        Label { Text(message).fixedSize(horizontal: false, vertical: true) } icon: {
+            Image(systemName: "exclamationmark.circle.fill")
+        }
+        .font(.subheadline)
+        .foregroundStyle(DowntifyStyle.error)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 @MainActor
@@ -177,6 +483,12 @@ private final class ConnectionFlowModel: ObservableObject {
         let address: String
         let supportsPasswordSignIn: Bool
         let usesInsecureHTTP: Bool
+    }
+
+    /// Back to the address step; keeps the typed address so it can be corrected.
+    func changeServer() {
+        target = nil; connectionTarget = nil; scannedPayload = nil; error = nil
+        consentToInsecureHTTP = false; password = ""; pairingCode = ""
     }
     @Published var address = ""
     @Published var username = ""

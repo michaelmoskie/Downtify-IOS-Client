@@ -17,12 +17,32 @@ struct DownloadsView: View {
     @State private var localError: LocalizedStringKey?
     @State private var requestMessage: LocalizedStringKey?
     @State private var pendingAlbumAdd: PendingAlbumAdd?
+    @State private var section = Section.device
+    @State private var freeBytes: Int64?
+
+    private enum Section: Hashable { case device, server }
+    private var redesign: Bool { palette.redesign("downloads") }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: palette.redesign("downloads") ? .leading : .center, spacing: DowntifyStyle.Space.large) {
-                localSection
-                serverSection
+            VStack(alignment: redesign ? .leading : .center, spacing: DowntifyStyle.Space.large) {
+                if redesign {
+                    HStack(spacing: 8) {
+                        DowntifyChip(title: "On This Device", isSelected: section == .device) { section = .device }
+                            .accessibilityIdentifier("downloads.device")
+                        DowntifyChip(title: "Library Requests", isSelected: section == .server) { section = .server }
+                            .accessibilityIdentifier("downloads.server")
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.bottom, -DowntifyStyle.Space.small)
+                    switch section {
+                    case .device: redesignLocalSection
+                    case .server: serverSection
+                    }
+                } else {
+                    localSection
+                    serverSection
+                }
             }
             .padding(DowntifyStyle.Space.regular)
             .frame(maxWidth: 760)
@@ -33,6 +53,7 @@ struct DownloadsView: View {
         .navigationTitle("Downloads")
         .toolbarBackground(palette.background, for: .navigationBar)
         .task { serverDownloads.start(); await load() }
+        .task(id: downloads.storedBytes) { if redesign { freeBytes = Self.availableBytes() } }
         .refreshable { await refreshQueue() }
         .alert("Library request", isPresented: Binding(get: { requestMessage != nil }, set: { if !$0 { requestMessage = nil } })) {
             Button("OK", role: .cancel) { requestMessage = nil }
@@ -54,6 +75,195 @@ struct DownloadsView: View {
 
     private func rowState(_ song: CatalogSong) -> ServerDownloadActionState {
         .catalogRow(server: serverDownloads.actionState(for: song), inLibrary: membership.containsSong(song))
+    }
+
+    private static func byteText(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    private static func availableBytes() -> Int64? {
+        let values = try? URL(fileURLWithPath: NSHomeDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// Storage card, play and shuffle for downloaded songs, then one row per song with artwork and a status icon.
+    private var redesignLocalSection: some View {
+        let items = downloads.currentDownloads
+        let ready = items.filter { $0.state == .ready }.map(\.track)
+        return VStack(alignment: .leading, spacing: DowntifyStyle.Space.regular) {
+            storageCard
+            if !ready.isEmpty {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Downloaded songs").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                        Text(ready.count == 1 ? String(localized: "1 song") : String(localized: "\(ready.count) songs"))
+                            .font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText)
+                    }
+                    Spacer()
+                    Button {
+                        playback.replaceQueue(ready, startingAt: Int.random(in: ready.indices))
+                        playback.setShuffle(true)
+                    } label: {
+                        Image(systemName: "shuffle").font(.title2.weight(.semibold))
+                            .foregroundStyle(DowntifyStyle.secondaryText).downtifyControlTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Shuffle downloaded songs")
+                    DowntifyPlayButton(size: 52) {
+                        playback.setShuffle(false)
+                        playback.replaceQueue(ready)
+                    }
+                    .accessibilityLabel("Play downloaded songs")
+                }
+            }
+            if let localError {
+                Label(localError, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(DowntifyStyle.error).accessibilityAddTraits(.isStaticText)
+            }
+            if items.isEmpty {
+                ContentUnavailableView {
+                    Label("Nothing on this device", systemImage: "arrow.down.circle")
+                } description: {
+                    Text("Use the download button on an album or playlist to listen without a connection.")
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+            } else {
+                LazyVStack(spacing: 4) {
+                    ForEach(items) { item in redesignLocalRow(item) }
+                }
+            }
+        }
+    }
+
+    private var storageCard: some View {
+        let used = downloads.storedBytes
+        let free = freeBytes ?? 0
+        let fraction = used + free > 0 ? Double(used) / Double(used + free) : 0
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Device storage", systemImage: "internaldrive").font(.headline)
+                Spacer()
+            }
+            GeometryReader { proxy in
+                Capsule().fill(palette.elevated)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(palette.brand)
+                            .frame(width: max(used > 0 ? 6 : 0, proxy.size.width * fraction))
+                    }
+            }
+            .frame(height: 8)
+            .accessibilityHidden(true)
+            HStack {
+                Label { Text("Used \(Self.byteText(used))") } icon: {
+                    Circle().fill(palette.brand).frame(width: 8, height: 8)
+                }
+                Spacer()
+                if let freeBytes {
+                    Text("\(Self.byteText(freeBytes)) free")
+                }
+            }
+            .font(.footnote.monospacedDigit())
+            .foregroundStyle(DowntifyStyle.secondaryText)
+            Text("Songs added to this device use its storage and can play without a server connection.")
+                .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
+        }
+        .padding(DowntifyStyle.Space.regular)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func redesignLocalRow(_ item: OfflineDownload) -> some View {
+        HStack(spacing: 12) {
+            NowPlayingReader { nowPlaying in
+                let isCurrent = nowPlaying.isCurrent(item.track)
+                Button {
+                    if item.state == .ready { playback.replaceQueue([item.track], startingAt: 0) }
+                } label: {
+                    HStack(spacing: 12) {
+                        TrackArtwork(track: item.track, size: 48).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                if isCurrent { NowPlayingBadge(isPlaying: nowPlaying.isPlaying) }
+                                Text(item.track.displayTitle).font(.body).lineLimit(1)
+                                    .foregroundStyle(isCurrent ? AnyShapeStyle(palette.accent) : AnyShapeStyle(.primary))
+                            }
+                            Text(item.track.displayArtist).font(.subheadline).foregroundStyle(DowntifyStyle.secondaryText).lineLimit(1)
+                            if item.state == .transferring, let expected = item.expectedBytes, expected > 0 {
+                                ProgressView(value: Double(item.receivedBytes), total: Double(expected))
+                                    .tint(palette.brand)
+                                    .accessibilityLabel("Adding to device progress for \(item.track.displayTitle)")
+                                    .accessibilityValue("\(Int(Double(item.receivedBytes) / Double(expected) * 100)) percent")
+                            } else if item.state != .ready {
+                                Text(localStatus(item)).font(.caption).foregroundStyle(statusColor(item))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .downtifyCurrentRowAccessibility(isCurrent: isCurrent, isPlaying: nowPlaying.isPlaying)
+            }
+            statusIcon(item)
+            Menu {
+                localActions(item)
+            } label: {
+                Image(systemName: "ellipsis").foregroundStyle(DowntifyStyle.secondaryText).downtifyControlTarget()
+            }
+            .accessibilityLabel("Actions for \(item.track.displayTitle)")
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func localActions(_ item: OfflineDownload) -> some View {
+        if item.state == .ready {
+            Button("Play", systemImage: "play.fill") {
+                playback.replaceQueue([item.track], startingAt: 0)
+            }
+            Button("Remove from Device", systemImage: "trash", role: .destructive) {
+                do { try downloads.delete(item.id); localError = nil }
+                catch { localError = "Could not remove this song from the device. Check available storage and try again." }
+            }
+        } else if item.pending {
+            Button("Cancel Adding to Device", systemImage: "xmark.circle") { downloads.cancel(item.id) }
+        } else {
+            Button("Retry Add to Device", systemImage: "exclamationmark.triangle") {
+                do { _ = try downloads.retry(item.id); localError = nil }
+                catch { localError = "Could not retry adding this song to the device. Reconnect and try again." }
+            }
+            Button("Remove from Device", systemImage: "trash", role: .destructive) {
+                do { try downloads.delete(item.id); localError = nil }
+                catch { localError = "Could not remove this song from the device." }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusIcon(_ item: OfflineDownload) -> some View {
+        switch item.state {
+        case .ready:
+            Image(systemName: "arrow.down.circle.fill").foregroundStyle(palette.accent)
+                .accessibilityLabel("On this device")
+        case .preparing, .transferring:
+            ProgressView().controlSize(.small).accessibilityLabel("Preparing \(item.track.displayTitle)")
+        case .paused:
+            Image(systemName: "pause.circle").foregroundStyle(DowntifyStyle.secondaryText).accessibilityHidden(true)
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(DowntifyStyle.error).accessibilityHidden(true)
+        case .cancelled:
+            Image(systemName: "xmark.circle").foregroundStyle(DowntifyStyle.secondaryText).accessibilityHidden(true)
+        }
+    }
+
+    private func statusColor(_ item: OfflineDownload) -> Color {
+        if case .failed = item.state { return DowntifyStyle.error }
+        return DowntifyStyle.secondaryText
     }
 
     private var localSection: some View {
@@ -144,7 +354,7 @@ struct DownloadsView: View {
     private var serverSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Library Requests", systemImage: "server.rack")
-                .font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                .font(redesign ? .title3.bold() : .title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
             Text("These requests run on the server. Completed items become available through library sync; they are not added to this device.")
                 .font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
             catalogDownloadActions
@@ -188,9 +398,15 @@ struct DownloadsView: View {
                     if let message = job.message, !message.isEmpty {
                         Text(message).font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
                     }
-                }.padding(.vertical, 6)
+                }
+                .padding(.vertical, redesign ? 12 : 6)
+                .padding(.horizontal, redesign ? 12 : 0)
+                .frame(maxWidth: redesign ? .infinity : nil, alignment: .leading)
+                .background(redesign ? AnyShapeStyle(palette.surface) : AnyShapeStyle(Color.clear),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             HStack(spacing: 8) {
+                if redesign { Image(systemName: "link").foregroundStyle(DowntifyStyle.secondaryText) }
                 TextField("https://…", text: $link)
                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .accessibilityLabel("Link to add to Library")
@@ -198,12 +414,16 @@ struct DownloadsView: View {
                     .disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || serverDownloads.isRefreshing || submittingLink)
                     .frame(minHeight: 44)
             }
+            .padding(.horizontal, redesign ? 12 : 0)
+            .background(redesign ? AnyShapeStyle(palette.elevated) : AnyShapeStyle(Color.clear),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .padding(.top, 4)
             Text("Library Requests are managed by the server. This paired device can view requests and submit links.")
                 .font(.caption).foregroundStyle(DowntifyStyle.secondaryText)
         }
-        .padding(16)
-        .background(palette.surface, in: RoundedRectangle(cornerRadius: palette.theme.map { CGFloat($0.cardCornerRadius) } ?? 20))
+        .padding(redesign ? 0 : 16)
+        .background(redesign ? AnyShapeStyle(Color.clear) : AnyShapeStyle(palette.surface),
+                    in: RoundedRectangle(cornerRadius: palette.theme.map { CGFloat($0.cardCornerRadius) } ?? 20))
     }
 
     private var catalogDownloadActions: some View {
@@ -301,7 +521,8 @@ struct DownloadsView: View {
             }
         }
         .padding(12)
-        .background(palette.background.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
+        .background(redesign ? AnyShapeStyle(palette.surface) : AnyShapeStyle(palette.background.opacity(0.45)),
+                    in: RoundedRectangle(cornerRadius: redesign ? 12 : 14, style: .continuous))
     }
 
     private var catalogSongs: [CatalogSong] {

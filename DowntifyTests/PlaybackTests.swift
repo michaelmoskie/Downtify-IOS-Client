@@ -474,6 +474,19 @@ final class PlaybackTests: XCTestCase {
                                                  seconds: 6, currentDuration: 200), "short songs are not overlapped")
     }
 
+    /// The mini player swipe goes back a song even late in the track, and keeps a paused player paused.
+    @MainActor
+    func testGoToPreviousSongIgnoresElapsedTimeAndKeepsPause() async throws {
+        let fixture = PlaybackFixture()
+        await fixture.controller.updateSession(deviceSession()) { [] }
+        fixture.controller.replaceQueue([track("first"), track("second")], startingAt: 1, autoplay: false)
+        fixture.controller.goToPreviousSong()
+        XCTAssertEqual(fixture.controller.queue.current?.track.id, "first")
+        XCTAssertNotEqual(fixture.controller.phase, .playing)
+        fixture.controller.goToPreviousSong()
+        XCTAssertEqual(fixture.controller.queue.current?.track.id, "first", "nothing before the first song")
+    }
+
     @MainActor
     func testRemoteSeekAndEndOfTrackAdvance() async throws {
         let fixture = PlaybackFixture()

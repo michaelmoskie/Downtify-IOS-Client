@@ -39,6 +39,8 @@
 		000000000000000000000099 = { isa = PBXBuildFile; fileRef = 000000000000000000000098; };
 		000000000000000000000308 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSettingsModel.swift; sourceTree = "<group>"; };
 		000000000000000000000309 = { isa = PBXBuildFile; fileRef = 000000000000000000000308; };
+		0000000000000000000003A0 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerReachabilityModel.swift; sourceTree = "<group>"; };
+		0000000000000000000003A1 = { isa = PBXBuildFile; fileRef = 0000000000000000000003A0; };
 		00000000000000000000030A = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSection.swift; sourceTree = "<group>"; };
 		00000000000000000000030B = { isa = PBXBuildFile; fileRef = 00000000000000000000030A; };
 		000000000000000000000304 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDataReset.swift; sourceTree = "<group>"; };
@@ -46,6 +48,8 @@
 		000000000000000000000310 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEqualizer.swift; sourceTree = "<group>"; };
 		000000000000000000000311 = { isa = PBXBuildFile; fileRef = 000000000000000000000310; };
 		000000000000000000000312 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EqualizerView.swift; sourceTree = "<group>"; };
+		00000000000000000000030E = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DowntifyComponents.swift; sourceTree = "<group>"; };
+		00000000000000000000030F = { isa = PBXBuildFile; fileRef = 00000000000000000000030E; };
 		000000000000000000000313 = { isa = PBXBuildFile; fileRef = 000000000000000000000312; };
 		000000000000000000000300 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInspector.swift; sourceTree = "<group>"; };
 		000000000000000000000301 = { isa = PBXBuildFile; fileRef = 000000000000000000000300; };
@@ -113,6 +117,8 @@
 		000000000000000000000307 = { isa = PBXBuildFile; fileRef = 000000000000000000000306; };
 		00000000000000000000030C = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSettingsModelTests.swift; sourceTree = "<group>"; };
 		00000000000000000000030D = { isa = PBXBuildFile; fileRef = 00000000000000000000030C; };
+		0000000000000000000003A2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerReachabilityModelTests.swift; sourceTree = "<group>"; };
+		0000000000000000000003A3 = { isa = PBXBuildFile; fileRef = 0000000000000000000003A2; };
 		000000000000000000000067 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDownloadQueue.swift; sourceTree = "<group>"; };
 		000000000000000000000068 = { isa = PBXBuildFile; fileRef = 000000000000000000000067; };
 		000000000000000000000065 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineDownloadAPI.swift; sourceTree = "<group>"; };
@@ -492,6 +498,7 @@
 				000000000000000000000300,
 				000000000000000000000304,
 				000000000000000000000308,
+				0000000000000000000003A0,
 			);
 			sourceTree = "<group>";
 			path = App;
@@ -510,6 +517,7 @@
 				000000000000000000000077,
 				000000000000000000000080,
 				000000000000000000000312,
+				00000000000000000000030E,
 				000000000000000000000075,
 			);
 			sourceTree = "<group>";
@@ -574,6 +582,7 @@
 				000000000000000000000302,
 				000000000000000000000306,
 				00000000000000000000030C,
+				0000000000000000000003A2,
 				00000000000000000000009A,
 				000000000000000000000E48,
 				000000000000000000000103,
@@ -641,9 +650,11 @@
 				000000000000000000000305,
 				00000000000000000000030B,
 				000000000000000000000309,
+				0000000000000000000003A1,
 				000000000000000000000099,
 				000000000000000000000311,
 				000000000000000000000313,
+				00000000000000000000030F,
 				000000000000000000000097,
 				000000000000000000000095,
 				000000000000000000000205,
@@ -761,6 +772,7 @@
 				000000000000000000000303,
 				000000000000000000000307,
 				00000000000000000000030D,
+				0000000000000000000003A3,
 				00000000000000000000009B,
 				000000000000000000000E49,
 				000000000000000000000104,

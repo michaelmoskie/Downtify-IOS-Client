@@ -1,12 +1,24 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Who is signed in and where, shown at the top of Settings when it opens from the profile drawer.
+struct SettingsAccount {
+    let name: String
+    let server: String
+    let role: String?
+    let signOut: () -> Void
+}
+
 struct SettingsView: View {
     @Environment(\.downtifyPalette) private var palette
     @Binding var appearance: DowntifyAppearance
     @Binding var language: String
     @Binding var networkOperationLimit: Int
     @ObservedObject var playback: PlaybackController
+    /// False when pushed onto a navigation stack rather than shown as a sheet.
+    var showsDoneButton = true
+    var account: SettingsAccount? = nil
+    var storage: StorageSettingsModel? = nil
     @AppStorage("debug.networkOverlay.enabled") private var networkOverlayEnabled = false
     @State private var showingAbout = false
     @AppStorage(DowntifyTheme.storageKey) private var themeJSON = ""
@@ -24,6 +36,26 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if let account {
+                Section {
+                    HStack(spacing: 14) {
+                        ProfileAvatar(name: account.name, size: 52)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: account.name).font(.headline)
+                            Label { Text(verbatim: account.server) } icon: { Image(systemName: "server.rack") }
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            if account.role?.lowercased() == "admin" {
+                                Text("Administrator").font(.caption.weight(.semibold)).foregroundStyle(palette.accent)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .combine)
+                    Button("Sign out", role: .destructive, action: account.signOut)
+                } header: {
+                    Text("Account")
+                }
+            }
             Section {
                 Toggle("Autoplay", isOn: Binding(get: { playback.autoplay }, set: { playback.setAutoplay($0) }))
                     .tint(palette.brand)
@@ -114,6 +146,9 @@ struct SettingsView: View {
                 Text("Some server supplied content, including music titles and descriptions, stays in its original language.")
                     .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if let storage {
+                StorageSection(model: storage)
+            }
             Section("About") {
                 Button("About Downtify") { showingAbout = true }
                 LabeledContent("Version", value: versionText)
@@ -144,7 +179,11 @@ struct SettingsView: View {
         } message: { Text(themeError ?? "") }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .toolbar {
+            if showsDoneButton {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
         .sheet(isPresented: $showingAbout) {
             NavigationStack { AboutView(version: versionText) }
         }

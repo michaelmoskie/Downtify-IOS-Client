@@ -16,6 +16,8 @@ struct DowntifyApp: App {
                 .environmentObject(container.collections)
                 .environmentObject(container.catalogPresentation)
                 .environmentObject(container.storageSettings)
+                .environmentObject(container.reachability)
+                .task { container.reachability.start() }
                 .environment(\.lyricDefaults, container.defaults)
                 .task { container.collections.start() }
                 .environmentObject(container.offlineDownloads)
@@ -31,6 +33,7 @@ struct DowntifyApp: App {
         .onChange(of: scenePhase, initial: true) { _, phase in
             container.librarySync.setActive(phase == .active)
             container.collections.setActionsActive(phase == .active)
+            container.reachability.setActive(phase == .active)
             if phase == .active {
                 container.offlineDownloads.observeSessions { try await container.connectionService.sessionUpdates() }
                 container.offlineDownloads.reconnect()

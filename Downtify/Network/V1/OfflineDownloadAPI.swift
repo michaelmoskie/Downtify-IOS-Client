@@ -9,6 +9,14 @@ struct OfflineDownloadSource {
 protocol OfflineDownloadPreparing {
     func prepare(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession,
                  wifiOnly: Bool) async throws -> OfflineDownloadSource
+    /// The song's cover image, saved with the download so it still shows without the server.
+    func cover(track: LibraryTrack, session: DeviceSession, wifiOnly: Bool) async throws -> Data
+}
+
+extension OfflineDownloadPreparing {
+    func cover(track: LibraryTrack, session: DeviceSession, wifiOnly: Bool) async throws -> Data {
+        throw OfflineDownloadFailure.network
+    }
 }
 
 struct OfflineDownloadAPI: OfflineDownloadPreparing {
@@ -76,6 +84,27 @@ struct OfflineDownloadAPI: OfflineDownloadPreparing {
         request.url = signedURL
         request.setValue(nil, forHTTPHeaderField: "Authorization")
         return OfflineDownloadSource(request: request, background: true, media: media)
+    }
+
+    func cover(track: LibraryTrack, session: DeviceSession, wifiOnly: Bool) async throws -> Data {
+        let address = try ServerAddress(session.baseAddress)
+        guard !address.usesInsecureHTTP || session.allowsInsecureHTTP else { throw PlaybackFailure.insecureAddress }
+        let client = APIClient(session: transport, allowsInsecureRequests: session.allowsInsecureHTTP)
+        // Check the server before sending the token, as the artwork loader does.
+        let info = try await client.serverInfo(at: address, allowsCellularAccess: !wifiOnly)
+        try Task.checkCancellation()
+        guard info.serverID == session.serverID else { throw PlaybackFailure.differentServer }
+        let url = address.url(for: "/api/v1/tracks").appendingPathComponent(track.id).appendingPathComponent("cover")
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw OfflineDownloadFailure.invalidFile
+        }
+        components.queryItems = [URLQueryItem(name: "size", value: "600")]
+        guard let coverURL = components.url else { throw OfflineDownloadFailure.invalidFile }
+        var request = URLRequest(url: coverURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.allowsCellularAccess = !wifiOnly
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Accept")
+        return try await client.send(request, to: address)
     }
 
     static func strongETag(_ response: HTTPURLResponse) -> String? {

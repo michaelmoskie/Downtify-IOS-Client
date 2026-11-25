@@ -596,6 +596,12 @@ final class PlaybackController: ObservableObject {
         }
     }
 
+    /// Moves to the previous song even after the first seconds (mini player swipe); keeps playing or paused.
+    func goToPreviousSong() {
+        guard podcast == nil, let previous = queue.previous() else { return }
+        advance(to: previous)
+    }
+
     func persist() {
         guard queueReadyForPersistence, let scope else { return }
         let musicPosition = podcast == nil ? position : suspendedMusicPosition

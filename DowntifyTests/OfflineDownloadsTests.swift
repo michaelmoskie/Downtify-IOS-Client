@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import XCTest
 @testable import Downtify
 
@@ -227,6 +228,72 @@ final class OfflineDownloadsTests: XCTestCase {
     }
 
     @MainActor
+    func testCoverIsSavedWithDownloadAndDeletedWithIt() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let api = CoverOnly(data: coverData())
+        let downloads = OfflineDownloads(directory: directory, api: api)
+        downloads.setSession(session())
+        let id = try downloads.enqueue(track(hasCover: true))
+
+        let cover = try await waitForCover(in: downloads)
+        XCTAssertEqual(cover.size.width * cover.scale, 16)
+        let file = directory.appending(path: "\(id.uuidString)-cover.jpg")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        // Another pairing never sees this device's saved covers.
+        let other = OfflineDownloads(directory: directory, api: api)
+        other.setSession(self.session(device: "new-pairing"))
+        XCTAssertNil(other.savedCover(for: "song"))
+
+        downloads.cancel(id)
+        try downloads.delete(id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNil(downloads.savedCover(for: "song"))
+    }
+
+    @MainActor
+    func testEarlierDownloadGetsItsCoverOnNextSessionButNotWhenServerIsDown() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let saved = record(state: .ready, bytes: 8, hasCover: true)
+        try seed([saved], in: directory)
+        try Data(repeating: 7, count: 8).write(to: directory.appending(path: "\(saved.id.uuidString).mp3"))
+
+        let offline = OfflineDownloads(directory: directory, api: CoverOnly(data: nil))
+        offline.setSession(session())
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(offline.savedCover(for: "song"))
+
+        let online = OfflineDownloads(directory: directory, api: CoverOnly(data: coverData()))
+        online.setSession(session())
+        _ = try await waitForCover(in: online)
+        XCTAssertNotNil(online.offlineStream(trackID: "song", session: session()))
+    }
+
+    @MainActor
+    func testSongWithoutCoverOnServerDoesNotStopTheRest() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let missing = OfflineDownload(id: UUID(), track: track(hasCover: true, id: "missing"), scope: .init(session()),
+                                      requestedQuality: .original, state: .ready, media: media, receivedBytes: 8)
+        try seed([missing, record(state: .ready, bytes: 8, hasCover: true)], in: directory)
+
+        let downloads = OfflineDownloads(directory: directory, api: CoverOnly(data: coverData(), missingTrackID: "missing"))
+        downloads.setSession(session())
+        _ = try await waitForCover(in: downloads)
+        XCTAssertNil(downloads.savedCover(for: "missing"))
+    }
+
+    private func coverData() -> Data {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16), format: format).jpegData(withCompressionQuality: 0.9) {
+            UIColor.systemRed.setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        }
+    }
+
+    @MainActor
     private func waitForFailure(_ id: UUID, in downloads: OfflineDownloads) async throws {
         for _ in 0..<100 {
             if case .failed = downloads.currentDownloads.first(where: { $0.id == id })?.state { return }
@@ -255,16 +322,26 @@ final class OfflineDownloadsTests: XCTestCase {
                       deviceID: device, username: "user", role: nil, token: "test-token", allowsInsecureHTTP: false)
     }
 
-    private func track() -> LibraryTrack {
-        LibraryTrack(id: "song", file: "Song.mp3", title: "Song", artist: "Artist", artists: [],
+    private func track(hasCover: Bool = false, id: String = "song") -> LibraryTrack {
+        LibraryTrack(id: id, file: "Song.mp3", title: "Song", artist: "Artist", artists: [],
                      album: "", albumArtist: "", albumID: "", artistID: "", trackNumber: 0, year: "",
                      duration: 60, codec: "mp3", bitrate: 0, sampleRate: 0, channels: 0, size: 8,
-                     added: 0, hasCover: false, isExplicit: false, playlists: [])
+                     added: 0, hasCover: hasCover, isExplicit: false, playlists: [])
     }
 
-    private func record(state: OfflineDownload.State, bytes: Int64) -> OfflineDownload {
-        OfflineDownload(id: UUID(), track: track(), scope: .init(session()), requestedQuality: .original,
+    private func record(state: OfflineDownload.State, bytes: Int64, hasCover: Bool = false) -> OfflineDownload {
+        OfflineDownload(id: UUID(), track: track(hasCover: hasCover), scope: .init(session()), requestedQuality: .original,
                         state: state, media: media, receivedBytes: bytes)
+    }
+
+    @MainActor
+    private func waitForCover(in downloads: OfflineDownloads) async throws -> UIImage {
+        for _ in 0..<200 {
+            if let cover = downloads.savedCover(for: "song") { return cover }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Expected a saved cover")
+        throw URLError(.timedOut)
     }
 
     private func info(signed: Bool) -> String {
@@ -279,6 +356,24 @@ private struct PendingPreparation: OfflineDownloadPreparing {
                  wifiOnly: Bool) async throws -> OfflineDownloadSource {
         try await Task.sleep(for: .seconds(60))
         throw CancellationError()
+    }
+}
+
+/// Never starts a transfer; answers cover requests with `data`, or fails like an unreachable server when nil.
+private struct CoverOnly: OfflineDownloadPreparing {
+    let data: Data?
+    var missingTrackID: String?
+
+    func prepare(track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession,
+                 wifiOnly: Bool) async throws -> OfflineDownloadSource {
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+
+    func cover(track: LibraryTrack, session: DeviceSession, wifiOnly: Bool) async throws -> Data {
+        guard let data else { throw APIError.transportFailure }
+        if track.id == missingTrackID { throw APIError.httpStatus(404, retryAfter: nil) }
+        return data
     }
 }
 

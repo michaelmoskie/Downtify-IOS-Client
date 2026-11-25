@@ -52,8 +52,14 @@ protocol OfflinePlaybackProviding: AnyObject {
     func offlineStream(trackID: String, session: DeviceSession) -> PlaybackStream?
 }
 
+/// Covers saved with downloaded songs, read before the network so artwork shows offline.
 @MainActor
-final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
+protocol OfflineCoverProviding: AnyObject {
+    func savedCover(for trackID: String) -> UIImage?
+}
+
+@MainActor
+final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding, OfflineCoverProviding {
     static let backgroundIdentifier = "app.downtify.ios.offline"
     static let live = OfflineDownloads()
 
@@ -73,6 +79,8 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     private var lastProgressSave = Date.distantPast
     private var backgroundCompletion: (() -> Void)?
     private var reconnecting = false
+    private var coverQueue: [UUID] = []
+    private var coverWorker: Task<Void, Never>?
 
     private lazy var delegate = OfflineTransferDelegate(owner: self)
     private lazy var background = makeSession(background: true)
@@ -150,12 +158,14 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
             }
         }
         if changed { save() }
+        queueMissingCovers()
     }
 
     func reconnect(completion: (() -> Void)? = nil) {
         if let completion { backgroundCompletion = completion }
         guard !reconnecting else { return }
         _ = openStore()
+        queueMissingCovers()
         reconnecting = true
         let pending = Set(records.filter(\.pending).map(\.id))
         background.getAllTasks { [weak self] tasks in
@@ -233,6 +243,13 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
         }
     }
 
+    func savedCover(for trackID: String) -> UIImage? {
+        guard let session, openStore() else { return nil }
+        let scope = OfflineDownload.Scope(session)
+        guard let record = records.first(where: { $0.track.id == trackID && $0.scope == scope }) else { return nil }
+        return UIImage(contentsOfFile: coverURL(record.id).path)
+    }
+
     private func start(_ track: LibraryTrack, quality: PlaybackQuality, session: DeviceSession,
                        replacing oldID: UUID? = nil) throws -> UUID {
         let previous = records
@@ -243,6 +260,8 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
             records = previous
             throw Self.failure(error)
         }
+        if let oldID { try? FileManager.default.removeItem(at: coverURL(oldID)) }
+        queueCovers([id])
 
         let wifiOnly = wifiOnly
         preparations[id] = Task { [weak self, api] in
@@ -426,6 +445,8 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     func removeAll() async throws {
         let ids = Set(records.map(\.id)).union(preparations.keys).union(jobs.keys).union(transferLeases.keys)
         for id in ids { stop(id) }
+        // A cover already in flight is not written once its record is gone.
+        coverQueue.removeAll()
         // Clearing records first makes late delegate callbacks (`finish`, `completed`, `progress`) no-ops.
         records = []
         guard openStore() else { throw storageFailure ?? OfflineDownloadFailure.fileSystem }
@@ -528,12 +549,65 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
     }
 
     private func removeFile(_ record: OfflineDownload) throws {
+        try? FileManager.default.removeItem(at: coverURL(record.id))
         guard let url = fileURL(record) else { return }
         do {
             try FileManager.default.removeItem(at: url)
         } catch let error as CocoaError where error.code == .fileNoSuchFile {
             // An absent file already satisfies deletion.
         }
+    }
+
+    private func coverURL(_ id: UUID) -> URL {
+        directory.appending(path: "\(id.uuidString)-cover.jpg")
+    }
+
+    /// Songs downloaded before covers were saved, or whose cover could not load at the time.
+    private func queueMissingCovers() {
+        guard session != nil, openStore() else { return }
+        queueCovers(currentDownloads.filter { record in
+            record.track.hasCover && record.state != .cancelled
+                && !FileManager.default.fileExists(atPath: coverURL(record.id).path)
+        }.map(\.id))
+    }
+
+    /// Covers load one at a time, after the song's own transfer has started.
+    private func queueCovers(_ ids: [UUID]) {
+        for id in ids where !coverQueue.contains(id) { coverQueue.append(id) }
+        guard coverWorker == nil, !coverQueue.isEmpty else { return }
+        coverWorker = Task { [weak self] in
+            while let self, !Task.isCancelled, !self.coverQueue.isEmpty {
+                let id = self.coverQueue.removeFirst()
+                guard await self.saveCover(id) else {
+                    // The server is unreachable; try the rest on the next launch or reconnect.
+                    self.coverQueue.removeAll()
+                    break
+                }
+            }
+            self?.coverWorker = nil
+        }
+    }
+
+    /// False only when the server could not be reached, so the queue can stop early.
+    private func saveCover(_ id: UUID) async -> Bool {
+        guard let session, let index = currentIndex(id) else { return true }
+        let track = records[index].track
+        let url = coverURL(id)
+        guard track.hasCover, !FileManager.default.fileExists(atPath: url.path) else { return true }
+        let data: Data
+        do {
+            data = try await api.cover(track: track, session: session, wifiOnly: wifiOnly)
+        } catch APIError.transportFailure {
+            return false
+        } catch {
+            // A missing or unreadable cover only skips this song.
+            return true
+        }
+        // A cover only a few pixels wide is a stand-in, not artwork.
+        guard !Task.isCancelled, self.session == session, currentIndex(id) != nil,
+              let image = UIImage(data: data), image.size.width * image.scale >= 8 else { return true }
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return true
     }
 
     private static func fileSize(_ url: URL) throws -> Int64 {
