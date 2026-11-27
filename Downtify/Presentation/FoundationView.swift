@@ -298,6 +298,7 @@ private final class ConnectionFlowModel: ObservableObject {
         case APIError.invalidAddress: return "Enter a valid server address, such as https://music.example.com."
         case APIError.insecureTransportConsentRequired: return "Confirm the unencrypted HTTP connection before signing in."
         case APIError.transportFailure: return "Could not reach this server. Check the address and network connection."
+        case APIError.insecureConnectionBlocked: return "This connection was blocked because it isn't encrypted. Use an https:// address if your server supports it."
         default: return "Could not connect. Check the server address and try again."
         }
     }

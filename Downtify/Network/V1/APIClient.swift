@@ -41,6 +41,8 @@ enum APIError: Error, Equatable {
     case unsupportedAPIVersion(Int)
     case decodingFailure
     case transportFailure
+    /// App Transport Security refused a cleartext HTTP request (URLError -1022) before it was sent.
+    case insecureConnectionBlocked
 }
 
 protocol HTTPDataLoading {
@@ -134,6 +136,10 @@ struct APIClient {
             if error is CancellationError { throw CancellationError() }
             // Never include the request URL, headers, or underlying error in diagnostics.
             let route = diagnosticRoute(request)
+            if let urlError = error as? URLError, urlError.code == .appTransportSecurityRequiresSecureConnection {
+                await NetworkOperationCoordinator.shared.recordFailure("Blocked by App Transport Security · \(route)")
+                throw APIError.insecureConnectionBlocked
+            }
             await NetworkOperationCoordinator.shared.recordFailure("Network transport failed · \(route)")
             if preservesTransportErrors, let urlError = error as? URLError { throw urlError }
             throw APIError.transportFailure

@@ -605,7 +605,7 @@ final class OfflineDownloads: ObservableObject, OfflinePlaybackProviding {
         if let error = error as? APIError {
             switch error {
             case .httpStatus(401, _): return .unauthorized
-            case .transportFailure, .httpStatus: return .network
+            case .transportFailure, .insecureConnectionBlocked, .httpStatus: return .network
             default: return .invalidFile
             }
         }

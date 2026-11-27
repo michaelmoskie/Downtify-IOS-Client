@@ -92,6 +92,30 @@ final class APIClientContractTests: XCTestCase {
         XCTAssertNotNil(loader.lastRequest)
     }
 
+    /// Issue #103: user-hosted servers on a public hostname over plain HTTP (for example through an
+    /// OpenZiti tunnel) must not be refused by App Transport Security. NSAllowsLocalNetworking only
+    /// exempts IP addresses and .local names, and its presence makes iOS ignore NSAllowsArbitraryLoads.
+    func testAppTransportSecurityAllowsUserHostedHTTPServers() throws {
+        let ats = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "NSAppTransportSecurity") as? [String: Any])
+        XCTAssertEqual(ats["NSAllowsArbitraryLoads"] as? Bool, true)
+        XCTAssertNil(ats["NSAllowsLocalNetworking"], "NSAllowsLocalNetworking disables NSAllowsArbitraryLoads")
+    }
+
+    func testAppTransportSecurityBlockHasItsOwnError() async throws {
+        let address = try ServerAddress("http://downtify.example.com")
+        let request = URLRequest(url: address.url(for: "/api/server/info"))
+        for preserves in [false, true] {
+            let client = APIClient(session: ThrowingLoader(error: URLError(.appTransportSecurityRequiresSecureConnection)),
+                                   allowsInsecureRequests: true, preservesTransportErrors: preserves)
+            do {
+                _ = try await client.send(request, to: address)
+                XCTFail("Expected the ATS block to surface")
+            } catch let error as APIError {
+                XCTAssertEqual(error, .insecureConnectionBlocked)
+            }
+        }
+    }
+
     func testLyricsFetchRequiresCapabilityAndUsesAuthenticatedV1Route() async throws {
         let info = #"{"product":"Downtify","api_version":1,"server_id":"srv","capabilities":{"lyrics":true}}"#
         let loader = SequenceLoader(bodies: [info, #"{"synced":"[00:01.00]Line","plain":"Line"}"#])
@@ -623,4 +647,9 @@ private final class DelayedServerInfoLoader: HTTPDataLoading {
     }
 
     func finishServerInfo() { continuation?.resume() }
+}
+
+private struct ThrowingLoader: HTTPDataLoading {
+    let error: Error
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) { throw error }
 }
