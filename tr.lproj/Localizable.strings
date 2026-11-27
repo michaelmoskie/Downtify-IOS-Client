@@ -705,3 +705,15 @@
 "%@ was requested for your Library" = "%@ kitaplığınız için istendi";
 "The song will appear after library sync." = "Şarkı, kitaplık eşzamanlandıktan sonra görünecek.";
 "Check Library requests for the current status." = "Güncel durum için kitaplık isteklerini kontrol edin.";
+
+/* Home, Equalizer, Autoplay, Crossfade, navigation and themes */
+"Browse all" = "Tümüne göz at";
+"Open navigation menu" = "Gezinme menüsünü aç";
+"Close navigation menu" = "Gezinme menüsünü kapat";
+"Color mode" = "Renk modu";
+"Original" = "Orijinal";
+"Redesign" = "Yeni tasarım";
+"Import theme…" = "Tema içe aktar…";
+"Export selected theme…" = "Seçili temayı dışa aktar…";
+"Import a JSON theme from Files. Changes apply immediately; OLED appearance keeps its black background." = "Dosyalar'dan bir JSON teması içe aktar. Değişiklikler hemen uygulanır; OLED görünümü siyah arka planını korur.";
+"Theme error" = "Tema hatası";
