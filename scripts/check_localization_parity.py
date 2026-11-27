@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-languages = ("en", "bg", "fr", "el", "hu", "pt-BR", "es", "tr")
+languages = ("en", "bg", "fr", "el", "hu", "pt-BR", "es", "tr", "de")
 entry_pattern = re.compile(r'^\s*("(?:[^"\\]|\\.)*")\s*=\s*("(?:[^"\\]|\\.)*");\s*$', re.M)
 
 def format_localization_key(value):

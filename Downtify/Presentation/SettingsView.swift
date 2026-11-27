@@ -19,7 +19,8 @@ struct SettingsView: View {
     private let languages: [(String, String)] = [
         ("system", "System default"), ("bg", "Български"), ("en", "English"),
         ("fr", "Français"), ("el", "Ελληνικά"), ("hu", "Magyar"),
-        ("pt-BR", "Português (Brasil)"), ("es", "Español"), ("tr", "Türkçe")
+        ("pt-BR", "Português (Brasil)"), ("es", "Español"), ("tr", "Türkçe"),
+        ("de", "Deutsch")
     ]
 
     var body: some View {

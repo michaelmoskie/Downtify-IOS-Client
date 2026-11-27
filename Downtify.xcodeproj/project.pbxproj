@@ -261,6 +261,7 @@
 		000000000000000000000087 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = pt-BR; path = pt-BR.lproj/Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000088 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000089 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = tr; path = tr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		DE0000000000000000000001 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000090 = { isa = PBXVariantGroup; children = (
 				000000000000000000000082,
 				000000000000000000000083,
@@ -270,6 +271,7 @@
 				000000000000000000000087,
 				000000000000000000000088,
 				000000000000000000000089,
+				DE0000000000000000000001,
 			); name = Localizable.strings; sourceTree = "<group>"; };
 		000000000000000000000091 = { isa = PBXBuildFile; fileRef = 000000000000000000000090; };
 		000000000000000000000001 = {
@@ -963,6 +965,7 @@
 				pt-BR,
 				es,
 				tr,
+				de,
 			);
 			mainGroup = 000000000000000000000014;
 			productRefGroup = 000000000000000000000013;
