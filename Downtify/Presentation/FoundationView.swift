@@ -299,6 +299,8 @@ private final class ConnectionFlowModel: ObservableObject {
         case APIError.insecureTransportConsentRequired: return "Confirm the unencrypted HTTP connection before signing in."
         case APIError.transportFailure: return "Could not reach this server. Check the address and network connection."
         case APIError.insecureConnectionBlocked: return "This connection was blocked because it isn't encrypted. Use an https:// address if your server supports it."
+        case APIError.untrustedCertificate: return "This server's HTTPS certificate isn't trusted on this device. For a self-signed or private certificate, install its certificate authority's profile, then turn on full trust in Settings > General > About > Certificate Trust Settings."
+        case APIError.secureConnectionFailed: return "Could not make a secure connection. Check that this address and port serve HTTPS, or use http:// if your server doesn't have a certificate."
         default: return "Could not connect. Check the server address and try again."
         }
     }

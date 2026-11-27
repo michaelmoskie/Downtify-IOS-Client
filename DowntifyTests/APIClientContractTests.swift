@@ -116,6 +116,33 @@ final class APIClientContractTests: XCTestCase {
         }
     }
 
+    /// Issue #103 follow-up: an HTTPS server with a self-signed or privately issued certificate must not
+    /// surface as the generic "Could not reach this server".
+    func testTLSFailuresHaveTheirOwnErrors() async throws {
+        let address = try ServerAddress("https://downtify.example.com")
+        let request = URLRequest(url: address.url(for: "/api/server/info"))
+        let cases: [(URLError.Code, APIError)] = [
+            (.serverCertificateUntrusted, .untrustedCertificate),
+            (.serverCertificateHasUnknownRoot, .untrustedCertificate),
+            (.serverCertificateHasBadDate, .untrustedCertificate),
+            (.serverCertificateNotYetValid, .untrustedCertificate),
+            (.secureConnectionFailed, .secureConnectionFailed),
+        ]
+        for (code, expected) in cases {
+            for preserves in [false, true] {
+                let client = APIClient(session: ThrowingLoader(error: URLError(code)), preservesTransportErrors: preserves)
+                do {
+                    _ = try await client.send(request, to: address)
+                    XCTFail("Expected \(code.rawValue) to surface")
+                } catch let error as APIError {
+                    XCTAssertEqual(error, expected, "URLError \(code.rawValue)")
+                }
+            }
+        }
+        XCTAssertEqual(PlaybackFailure.from(APIError.untrustedCertificate), .insecureAddress)
+        XCTAssertNil(APIError.tlsFailure(.timedOut))
+    }
+
     func testLyricsFetchRequiresCapabilityAndUsesAuthenticatedV1Route() async throws {
         let info = #"{"product":"Downtify","api_version":1,"server_id":"srv","capabilities":{"lyrics":true}}"#
         let loader = SequenceLoader(bodies: [info, #"{"synced":"[00:01.00]Line","plain":"Line"}"#])
