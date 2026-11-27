@@ -1255,8 +1255,8 @@ private struct PlaybackQueueSheet: View {
             Toggle(isOn: Binding(get: { playback.autoplay }, set: { playback.setAutoplay($0) })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Autoplay").font(.body.weight(.semibold))
-                    Text(playback.queue.repeatMode != .off ? "Paused while repeat is on."
-                         : "When your music ends, keep playing similar songs.")
+                    Text(playback.queue.repeatMode != .off ? String(localized: "Paused while repeat is on.")
+                         : String(localized: "When your music ends, keep playing similar songs."))
                         .font(.footnote).foregroundStyle(DowntifyStyle.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }

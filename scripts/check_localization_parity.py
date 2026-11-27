@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-languages = ("en", "bg", "fr", "el", "hu", "pt-BR", "es", "tr")
+languages = ("en", "bg", "fr", "el", "hu", "pt-BR", "es", "tr", "de")
 entry_pattern = re.compile(r'^\s*("(?:[^"\\]|\\.)*")\s*=\s*("(?:[^"\\]|\\.)*");\s*$', re.M)
 
 def format_localization_key(value):
@@ -48,7 +48,7 @@ def format_localization_key(value):
                     "network.active", "network.maximum", "network.queued", "network.foregroundActive",
                     "network.foregroundQueued", "network.backgroundActive", "network.backgroundQueued",
                     "playback.queue.upcomingCount", "activeTransfers", "pausedTransfers",
-                    "pendingCount",
+                    "pendingCount", "ready.count", "tracks.count",
                 }:
                     result.append("%lld")
                 else:
@@ -161,6 +161,8 @@ for source in glob.glob("Downtify/**/*.swift", recursive=True):
         for key in re.findall(r'\b(?:message|title):\s*"((?:[^"\\]|\\.)*)"', content):
             source_keys.add(format_localization_key(key))
 source_keys.update({"System", "Light", "Dark", "OLED black"})
+# SettingsView shows the equalizer preset through LocalizedStringKey(... ?? "Custom").
+source_keys.update({"Custom"})
 source_keys.update({"Could not reach the server."})
 source_keys.update({"Queue %@ · %lld active", "Working on %@"})
 source_keys.update({
