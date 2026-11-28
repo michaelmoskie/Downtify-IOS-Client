@@ -43,6 +43,11 @@ enum APIError: Error, Equatable {
     case transportFailure
     /// App Transport Security refused a cleartext HTTP request (URLError -1022) before it was sent.
     case insecureConnectionBlocked
+    /// The HTTPS server's certificate failed validation (URLError -1201...-1204): it is self-signed,
+    /// issued by a certificate authority this device doesn't fully trust, expired or not yet valid.
+    case untrustedCertificate
+    /// The TLS handshake failed (URLError -1200), for example because nothing serves HTTPS on that port.
+    case secureConnectionFailed
 }
 
 protocol HTTPDataLoading {
@@ -50,6 +55,20 @@ protocol HTTPDataLoading {
 }
 
 extension URLSession: HTTPDataLoading {}
+
+extension APIError {
+    static func tlsFailure(_ code: URLError.Code) -> APIError? {
+        switch code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid:
+            return .untrustedCertificate
+        case .secureConnectionFailed:
+            return .secureConnectionFailed
+        default:
+            return nil
+        }
+    }
+}
 
 struct APIClient {
     private let session: any HTTPDataLoading
@@ -139,6 +158,11 @@ struct APIClient {
             if let urlError = error as? URLError, urlError.code == .appTransportSecurityRequiresSecureConnection {
                 await NetworkOperationCoordinator.shared.recordFailure("Blocked by App Transport Security · \(route)")
                 throw APIError.insecureConnectionBlocked
+            }
+            if let urlError = error as? URLError, let tlsError = APIError.tlsFailure(urlError.code) {
+                await NetworkOperationCoordinator.shared.recordFailure(
+                    (tlsError == .untrustedCertificate ? "Server certificate not trusted" : "TLS handshake failed") + " · \(route)")
+                throw tlsError
             }
             await NetworkOperationCoordinator.shared.recordFailure("Network transport failed · \(route)")
             if preservesTransportErrors, let urlError = error as? URLError { throw urlError }

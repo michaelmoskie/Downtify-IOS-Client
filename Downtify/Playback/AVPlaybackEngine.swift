@@ -469,7 +469,8 @@ extension PlaybackFailure {
         switch error {
         case APIError.httpStatus(401, _): return .unauthorized
         case ConnectionError.differentServer: return .differentServer
-        case APIError.insecureTransportConsentRequired, APIError.insecureConnectionBlocked: return .insecureAddress
+        case APIError.insecureTransportConsentRequired, APIError.insecureConnectionBlocked,
+             APIError.untrustedCertificate, APIError.secureConnectionFailed: return .insecureAddress
         case APIError.transportFailure: return .network
         case APIError.httpStatus, APIError.invalidAddress, APIError.invalidResponse, APIError.decodingFailure:
             return .invalidStream
